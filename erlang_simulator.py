@@ -170,3 +170,34 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             st.dataframe(pd.DataFrame(results_open, columns=["Interval"] + weekdays_order))
         except Exception as e:
             st.error(f"Could not parse table data. Error: {e}")
+
+results_kpi, results_over = [], []
+
+for idx, interval in enumerate(intervals):
+    row_kpi = [interval]
+    row_over = [interval]
+    for day_idx, day in enumerate(weekdays_order):
+        call_volume = df.loc[idx, day]
+        agents_scheduled = coverage_matrix[idx][day_idx]
+        agents_needed = results_needed[idx][day_idx + 1]  # from previous grid!
+        over_under = agents_scheduled - agents_needed
+
+        calls_per_sec = float(call_volume) / 1800
+        traffic_intensity = calls_per_sec * aht
+
+        # KPI calculations
+        prob_wait = erlang_c(traffic_intensity, agents_scheduled)
+        service_level = asa = abandon_rate = line_adherence = None
+        if prob_wait is not None and agents_scheduled > traffic_intensity:
+            asa = (prob_wait * aht) / (agents_scheduled - traffic_intensity)
+            service_level = (1 - prob_wait * math.exp(-(agents_scheduled - traffic_intensity) * (asa_target / aht))) * 100
+        if selected_kpi == "Abandon Rate":
+            def erlang_a(arrival_rate, service_rate, agents, patience):
+                a = arrival_rate / service_rate
+                rho = a / agents
+                exp_neg_p = math.exp(-patience * (agents * service_rate - arrival_rate) / agents)
+                if rho >= 1 or agents == 0:
+                    return 100.0
+                num = (a ** agents / math.factorial(agents)) * (1 - exp_neg_p)
+                denom = sum([(a ** n) / math.factorial(n) for n in range(agents)]) + num
+                p_abandon = num / denom if denom > 0 else 1.0
