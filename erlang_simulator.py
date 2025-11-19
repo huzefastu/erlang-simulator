@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import math
 import io
+import numpy as np
 
 st.title("Contact Center Erlang Simulation")
 
@@ -37,7 +38,6 @@ elif selected_kpi == "Average Speed of Answer (ASA)":
 asa_target = st.sidebar.number_input("ASA Target (seconds, always active)", value=20, min_value=1, max_value=1000)
 target_scope = st.sidebar.selectbox("Should KPI be met per:", ["Interval", "Day", "Week"])
 
-# Abandon Rate patience input
 if selected_kpi == "Abandon Rate":
     st.sidebar.markdown("**Abandon Rate Simulation requires estimated caller patience (seconds):**")
     patience = st.sidebar.number_input("Average Caller Patience (seconds)", value=30, min_value=1, max_value=600)
@@ -55,26 +55,21 @@ min_shift_gap = st.sidebar.number_input("Min Gap Between Shifts (hours)", min_va
 working_days_per_week = st.sidebar.number_input("Agent Working Days per Week", min_value=1, max_value=7, value=5)
 min_shift_length = st.sidebar.number_input("Minimum Shift Length (hours)", min_value=1, max_value=12, value=4)
 max_shift_length = st.sidebar.number_input("Maximum Shift Length (hours)", min_value=1, max_value=12, value=8)
+total_agents = st.sidebar.number_input("Total FTE For Day", value=30, min_value=1, max_value=1000)
+
+# Defaults
+operating_hours = 24
+interval_length_min = 30
 
 st.markdown(
-    f"""**Sidebar KPI & Shrinkage & Shift/Agent Rules Setup**:  
-- **KPI:** {selected_kpi} (Target: {target_kpi})
-- **ASA Target (seconds):** {asa_target}
-- **KPI Target Scope:** {target_scope}
-- **Average Caller Patience (seconds):** {patience}
-- **In-office Shrinkage:** {in_office_shrinkage}%  
-- **Out-of-office Shrinkage:** {out_office_shrinkage}%  
-- **Number of Different Shifts:** {num_shifts}  
-- **Max Hours/Agent/Day:** {max_hours_per_agent}  
-- **Min Gap Between Shifts:** {min_shift_gap} hours  
-- **Working Days per Week:** {working_days_per_week}  
-- **Min/Max Shift Length:** {min_shift_length}-{max_shift_length} hours  
-"""
-)
+    f"""**Sidebar KPI, Shrinkage, Shift/Agent Rules Setup**:  
+- **Shifts:** {num_shifts} × {min_shift_length}-{max_shift_length} hr  
+- **Total agents (FTE):** {total_agents}
+""")
 
 if sim_mode == "Volume-based Requirement (Erlang)":
     st.header("Paste Call Volume Table")
-    st.markdown("*Copy 30-min interval data from Excel and paste here. Use tab or comma separated format. Header row should be: Interval, Sunday, Monday, ..., Saturday*")
+    st.markdown("*Copy 30-min interval data from Excel, header must be: Interval, Sunday, Monday, ..., Saturday*")
     pasted_data = st.text_area("Paste your table data below (include header):", height=300)
 
     if pasted_data.strip():
@@ -90,6 +85,42 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             days = [col for col in df.columns if col.lower() != 'interval']
             selected_day = st.selectbox("Select Day to Simulate", days)
 
+            # ---- Shift Auto-generation ----
+            num_intervals = int(operating_hours * 60 / interval_length_min)
+            shift_length = max(min_shift_length, min(max_shift_length, int((operating_hours / num_shifts))))  # round shift to fill day
+            intervals_per_shift = int((shift_length * 60) / interval_length_min)
+            # Shift start intervals (evenly spread)
+            shift_starts = [int(i * num_intervals / num_shifts) for i in range(num_shifts)]
+            intervals = df['Interval'].tolist()
+            # For now, evenly split agents per shift
+            agents_per_shift = [int(total_agents // num_shifts)] * num_shifts
+            for i in range(total_agents % num_shifts):
+                agents_per_shift[i] += 1  # distribute extra agents if not even
+
+            # Build shift schedule table
+            shifts = []
+            for idx, start in enumerate(shift_starts):
+                s_start = intervals[start % num_intervals]
+                s_end_idx = (start + intervals_per_shift - 1) % num_intervals
+                s_end = intervals[s_end_idx]
+                shifts.append({
+                    "Shift #": idx + 1,
+                    "Start Interval": s_start,
+                    "End Interval": s_end,
+                    "Intervals Covered": intervals_per_shift,
+                    "Agents": agents_per_shift[idx]
+                })
+            st.subheader("Auto-Generated Shifts (Demo):")
+            st.dataframe(pd.DataFrame(shifts))
+
+            # Map agent coverage per interval
+            coverage = [0 for _ in range(num_intervals)]
+            for i, shift_start in enumerate(shift_starts):
+                for k in range(intervals_per_shift):
+                    idx = (shift_start + k) % num_intervals
+                    coverage[idx] += agents_per_shift[i]
+
+            # ---- Simulation & KPI Calculation ----
             def erlang_c(traffic_intensity, agents):
                 if agents <= traffic_intensity:
                     return None
@@ -106,7 +137,6 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             def erlang_a(arrival_rate, service_rate, agents, patience):
                 a = arrival_rate / service_rate
                 rho = a / agents
-
                 exp_neg_p = math.exp(-patience * (agents * service_rate - arrival_rate) / agents)
                 if rho >= 1 or agents == 0:
                     return 100.0
@@ -124,30 +154,23 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                 arrival_rate = call_volume / 1800
                 service_rate = 1 / aht
 
-                traffic_intensity = arrival_rate * aht
-                baseline_agents = max(1, math.ceil(traffic_intensity + 1))
-                agent_needed = max(1, math.ceil(baseline_agents * shrinkage_mult))
+                agents_needed = max(1, math.ceil((arrival_rate * aht + 1) * shrinkage_mult))
+                agents_covered = coverage[i]
 
+                # Only calculate queueing KPIs if agent is available
+                value, met, kpi_label = None, None, selected_kpi
                 prob_wait, asa, service_level, abandon_rate, line_adherence = None, None, None, None, None
 
-                if agent_needed > traffic_intensity:
-                    prob_wait = erlang_c(traffic_intensity, agent_needed)
-                    if prob_wait is not None:
-                        try:
-                            asa = (prob_wait * aht) / (agent_needed - traffic_intensity)
-                        except ZeroDivisionError:
-                            asa = None
-                        service_level = (1 - prob_wait * math.exp(-(agent_needed - traffic_intensity) * (asa_target / aht))) * 100 if prob_wait is not None else None
-                    # Abandon rate (Erlang A)
+                if agents_covered > 0:
+                    traffic_intensity = arrival_rate * aht
+                    prob_wait = erlang_c(traffic_intensity, agents_covered)
+                    if prob_wait is not None and agents_covered > traffic_intensity:
+                        asa = (prob_wait * aht) / (agents_covered - traffic_intensity)
+                        service_level = (1 - prob_wait * math.exp(-(agents_covered - traffic_intensity) * (asa_target / aht))) * 100
                     if selected_kpi == "Abandon Rate":
-                        try:
-                            abandon_rate = erlang_a(arrival_rate, service_rate, agent_needed, patience)
-                        except Exception:
-                            abandon_rate = None
-                    # Line adherence (simulate as 100% if agent_needed met)
+                        abandon_rate = erlang_a(arrival_rate, service_rate, agents_covered, patience)
                     if selected_kpi == "Line Adherence":
-                        # 100% since agent_needed always fully covered in this simplified model
-                        line_adherence = 100 if agent_needed >= baseline_agents else round(100 * agent_needed / baseline_agents,2)
+                        line_adherence = round(100 * agents_covered / agents_needed, 2) if agents_needed > 0 else 100
 
                 if selected_kpi == "Service Level (SLA)":
                     value = None if service_level is None else round(service_level, 2)
@@ -173,7 +196,8 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                 output_rows.append({
                     "Interval": interval,
                     "Call Volume": call_volume,
-                    "Agents Needed": agent_needed,
+                    "Agents Needed": agents_needed,
+                    "Agents Scheduled": agents_covered,
                     kpi_label: value,
                     "Target Met": met
                 })
@@ -184,6 +208,7 @@ if sim_mode == "Volume-based Requirement (Erlang)":
 
         except Exception as e:
             st.error(f"Could not parse table data. Error: {e}")
+
     else:
         st.info("Paste your interval-level call volumes (with headers) above to proceed.")
 
