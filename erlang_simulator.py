@@ -5,13 +5,13 @@ import io
 
 st.title("Contact Center Erlang Simulation")
 
-# Input controls (same as before) ...
 sim_mode = st.radio(
     "Choose simulation mode:",
     ["Volume-based Requirement (Erlang)", "Hours-based Requirement (coverage)"]
 )
 st.write(f"**Simulation mode selected:** {sim_mode}")
 
+# SIDEBAR CONTROLS
 st.sidebar.header("KPI Setup")
 kpi_options = ["Service Level (SLA)", "Abandon Rate", "Line Adherence", "Average Speed of Answer (ASA)"]
 selected_kpi = st.sidebar.selectbox("KPI for Simulation", kpi_options)
@@ -51,7 +51,7 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             intervals = df["Interval"].tolist()
             all_days = [d for d in df.columns if d != "Interval"]
 
-            # 1. AUTOGENERATE WEEK-OFFS
+            # Week-off assignment
             week_offs_per_agent = days_in_week - working_days_per_week
             agent_week_off_distribution = [[] for _ in range(days_in_week)]
             agent_indices = list(range(total_agents))
@@ -59,24 +59,22 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                 for w in range(week_offs_per_agent):
                     week_off_day = (idx + w) % days_in_week
                     agent_week_off_distribution[week_off_day].append(agent)
-            # AGENT ROSTER TABLE (Grid 1)
+
+            # Grid 1: Agent Roster
             agent_roster = []
-            agent_day_shifts = []
+            agent_id = 1
             num_intervals = len(intervals)
             shift_length = max(min_shift_length, min(max_shift_length, int(operating_hours / num_shifts)))
             intervals_per_shift = int((shift_length * 60) // interval_length_min)
             shift_starts = [int(i * num_intervals // num_shifts) for i in range(num_shifts)]
-            # Assign as evenly as possible
             agents_per_shift = [int(total_agents // num_shifts)] * num_shifts
             for i in range(total_agents % num_shifts):
                 agents_per_shift[i] += 1
-            agent_id = 1
             for shift_idx, (start, count) in enumerate(zip(shift_starts, agents_per_shift)):
                 s_start = intervals[start % num_intervals]
                 s_end = intervals[(start + intervals_per_shift - 1) % num_intervals]
                 for a in range(count):
                     idx = agent_id - 1
-                    # Agent week-offs
                     week_off_indices = [dow for dow, lst in enumerate(agent_week_off_distribution) if idx in lst]
                     week_off_labels = [weekdays_order[dow] for dow in week_off_indices][:2]
                     while len(week_off_labels) < 2:
@@ -86,39 +84,37 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             st.subheader("Grid 1: Agent Roster")
             st.dataframe(pd.DataFrame(agent_roster, columns=["Agent ID", "Shift Start", "Shift End", "Week Off 1", "Week Off 2"]))
 
-            # 2. COVERAGE LOGIC FOR ALL DAYS AND INTERVALS
+            # Compute coverage for all days/intervals
             shrinkage_mult = 1 / ((1 - in_office_shrinkage / 100) * (1 - out_office_shrinkage / 100))
-            day_grids = {k: [] for k in ["kpi", "over", "shrink"]}
-            results_kpi = []
-            results_over = []
-            results_shrink = []
+            # Build 2D coverage: coverage[interval_idx][day_idx]
+            coverage_matrix = [[0 for _ in range(days_in_week)] for _ in range(num_intervals)]
+            pointer = 0
+            # For each shift, each agent, for each interval, each day
+            for shift_idx, shift_start in enumerate(shift_starts):
+                for a in range(agents_per_shift[shift_idx]):
+                    agent_num = pointer
+                    for day_idx in range(days_in_week):
+                        if agent_num not in agent_week_off_distribution[day_idx]:
+                            covered_idxs = [(shift_start + k) % num_intervals for k in range(intervals_per_shift)]
+                            for idx in covered_idxs:
+                                coverage_matrix[idx][day_idx] += 1
+                    pointer += 1
+
+            # GRID 2/3/4 build
+            results_kpi, results_over, results_shrink = [], [], []
             for idx, interval in enumerate(intervals):
                 row_kpi = [interval]
                 row_over = [interval]
                 row_shrink = [interval]
                 for day_idx, day in enumerate(weekdays_order):
-                    # ------------- Calculate scheduled agents for this interval and day -------------
-                    # Agents present = only those not off duty for this day, who are scheduled for interval
-                    agents_off_today = set(agent_week_off_distribution[day_idx])
-                    scheduled_today = []
-                    pointer = 0
-                    for shift_i, (start, count) in enumerate(zip(shift_starts, agents_per_shift)):
-                        for a in range(count):
-                            agent_num = pointer
-                            if agent_num not in agents_off_today:
-                                # Interval coverage for this shift
-                                covered_idxs = [(start + k) % num_intervals for k in range(intervals_per_shift)]
-                                if idx in covered_idxs:
-                                    scheduled_today.append(agent_num)
-                            pointer += 1
+                    agents_covered = coverage_matrix[idx][day_idx]
                     call_volume = df.loc[idx, day] if day in df.columns else 0
                     aht = asa_target
                     arrival_rate = float(call_volume) / 1800
-                    agents_covered = len(scheduled_today)
                     traffic_intensity = arrival_rate * aht
                     agents_needed = max(1, math.ceil((arrival_rate * aht + 1) * shrinkage_mult))
                     over_under = agents_covered - agents_needed
-                    # ---- KPI Calculation ----
+                    # KPI calculation
                     def erlang_c(traffic_intensity, agents):
                         if agents <= traffic_intensity:
                             return None
@@ -145,10 +141,7 @@ if sim_mode == "Volume-based Requirement (Erlang)":
 
                     if agents_covered > 0:
                         prob_wait = erlang_c(traffic_intensity, agents_covered)
-                        service_level = None
-                        asa = None
-                        abandon_rate = None
-                        line_adherence = None
+                        service_level = asa = abandon_rate = line_adherence = None
                         if prob_wait is not None and agents_covered > traffic_intensity:
                             asa = (prob_wait * aht) / (agents_covered - traffic_intensity)
                             service_level = (1 - prob_wait * math.exp(-(agents_covered - traffic_intensity) * (asa_target / aht))) * 100
