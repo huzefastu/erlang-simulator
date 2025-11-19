@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import math
 
 st.title("Contact Center Erlang Simulation")
 
@@ -24,3 +25,46 @@ roster = pd.DataFrame({
 
 st.header("Automated Agent Roster")
 st.dataframe(roster)
+
+import math
+
+def erlang_c(traffic_intensity, agents):
+    # Calculate Erlang C probability of waiting
+    traffic_power = traffic_intensity ** agents
+    agents_fact = math.factorial(agents)
+    
+    # Calculate sum for C formula denominator
+    sum_terms = sum([
+        (traffic_intensity ** n) / math.factorial(n)
+        for n in range(agents)
+    ])
+    
+    erlangC = (traffic_power / agents_fact) * (agents / (agents - traffic_intensity))
+    P_wait = erlangC / (sum_terms + erlangC)
+    return P_wait
+
+# Calculate traffic intensity (A): A = (Call Volume per hour * AHT in seconds) / 3600
+traffic_intensity = (call_volume * aht) / 3600
+
+# Erlang C probability that a call waits
+if num_agents > traffic_intensity:
+    prob_wait = erlang_c(traffic_intensity, num_agents)
+    # Expected ASA (average speed of answer in seconds)
+    asa = (prob_wait * aht) / (num_agents - traffic_intensity)
+    # Example Service Level: % of calls answered within 20 seconds
+    target_seconds = 20
+    service_level = (1 - prob_wait * math.exp(-(num_agents - traffic_intensity) * (target_seconds / aht))) * 100
+else:
+    prob_wait = None
+    asa = None
+    service_level = None
+
+# Output KPIs
+st.header("Simulation KPIs")
+
+if prob_wait is not None:
+    st.write(f"**Probability Call Waits:** {prob_wait:.2%}")
+    st.write(f"**Expected ASA (seconds):** {asa:.2f}")
+    st.write(f"**Service Level (% within 20 sec):** {service_level:.2f}")
+else:
+    st.write("Not enough agents: traffic exceeds staffing. Increase agent count.")
