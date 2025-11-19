@@ -98,4 +98,9 @@ elif sim_mode == "Hours-based Requirement (coverage)":
             hrs_df = pd.read_csv(io.StringIO(pasted_hours), sep=None, engine="python")
             st.subheader("Pasted Hours Requirement Table")
             st.dataframe(hrs_df)
-            # Further simulation/evaluation logic
+            # Further simulation/evaluation logic can go here...
+
+        except Exception as e:
+            st.error(f"Could not parse table data. Error: {e}")
+    else:
+        st.info("Paste your interval-level hours required (with headers) above to proceed.")
