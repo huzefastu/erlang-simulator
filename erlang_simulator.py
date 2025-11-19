@@ -16,18 +16,15 @@ st.sidebar.header("KPI Setup")
 kpi_options = ["Service Level (SLA)", "Abandon Rate", "Line Adherence", "Average Speed of Answer (ASA)"]
 selected_kpi = st.sidebar.selectbox("KPI for Simulation", kpi_options)
 target_kpi = st.sidebar.number_input(
-    "Target " + selected_kpi + (" (%)" if "Rate" in selected_kpi or "Level" in selected_kpi else " (seconds)"),
+    f"Target {selected_kpi} ({'%' if 'Rate' in selected_kpi or 'Level' in selected_kpi else 'seconds'})",
     value=80 if selected_kpi == "Service Level (SLA)" else 10 if selected_kpi == "Abandon Rate" else 100 if selected_kpi == "Line Adherence" else 20,
     min_value=0, max_value=1000
 )
+aht = st.sidebar.number_input("Average Handling Time (AHT, seconds)", min_value=1, max_value=3600, value=180, step=1)
 asa_target = st.sidebar.number_input("ASA Target (seconds, always active)", value=20, min_value=1, max_value=1000)
 patience = st.sidebar.number_input(
-    "Avg Caller Patience (s)", 
-    min_value=1, 
-    max_value=600, 
-    value=30, 
-    step=1, 
-    disabled=False if selected_kpi == "Abandon Rate" else True
+    "Avg Caller Patience (s)", min_value=1, max_value=600, value=30,
+    step=1, disabled=False if selected_kpi == "Abandon Rate" else True
 )
 st.sidebar.header("Shrinkage Setup")
 in_office_shrinkage = st.sidebar.number_input("In-office Shrinkage (%)", value=20, min_value=0, max_value=100)
@@ -95,7 +92,6 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             # Build 2D coverage: coverage[interval_idx][day_idx]
             coverage_matrix = [[0 for _ in range(days_in_week)] for _ in range(num_intervals)]
             pointer = 0
-            # For each shift, each agent, for each interval, each day
             for shift_idx, shift_start in enumerate(shift_starts):
                 for a in range(agents_per_shift[shift_idx]):
                     agent_num = pointer
@@ -106,7 +102,30 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                                 coverage_matrix[idx][day_idx] += 1
                     pointer += 1
 
-            # GRID 2/3/4 build
+            def erlang_c(traffic_intensity, agents):
+                if agents <= traffic_intensity:
+                    return None
+                traffic_power = traffic_intensity ** agents
+                agents_fact = math.factorial(agents)
+                sum_terms = sum([
+                    (traffic_intensity ** n) / math.factorial(n)
+                    for n in range(agents)
+                ])
+                erlangC = (traffic_power / agents_fact) * (agents / (agents - traffic_intensity))
+                P_wait = erlangC / (sum_terms + erlangC)
+                return P_wait
+
+            def erlang_a(arrival_rate, service_rate, agents, patience):
+                a = arrival_rate / service_rate
+                rho = a / agents
+                exp_neg_p = math.exp(-patience * (agents * service_rate - arrival_rate) / agents)
+                if rho >= 1 or agents == 0:
+                    return 100.0
+                num = (a ** agents / math.factorial(agents)) * (1 - exp_neg_p)
+                denom = sum([(a ** n) / math.factorial(n) for n in range(agents)]) + num
+                p_abandon = num / denom if denom > 0 else 1.0
+                return p_abandon * 100
+
             results_kpi, results_over, results_shrink = [], [], []
             for idx, interval in enumerate(intervals):
                 row_kpi = [interval]
@@ -115,36 +134,11 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                 for day_idx, day in enumerate(weekdays_order):
                     agents_covered = coverage_matrix[idx][day_idx]
                     call_volume = df.loc[idx, day] if day in df.columns else 0
-                    aht = asa_target
                     arrival_rate = float(call_volume) / 1800
                     traffic_intensity = arrival_rate * aht
                     agents_needed = max(1, math.ceil((arrival_rate * aht + 1) * shrinkage_mult))
                     over_under = agents_covered - agents_needed
                     # KPI calculation
-                    def erlang_c(traffic_intensity, agents):
-                        if agents <= traffic_intensity:
-                            return None
-                        traffic_power = traffic_intensity ** agents
-                        agents_fact = math.factorial(agents)
-                        sum_terms = sum([
-                            (traffic_intensity ** n) / math.factorial(n)
-                            for n in range(agents)
-                        ])
-                        erlangC = (traffic_power / agents_fact) * (agents / (agents - traffic_intensity))
-                        P_wait = erlangC / (sum_terms + erlangC)
-                        return P_wait
-
-                    def erlang_a(arrival_rate, service_rate, agents, patience):
-                        a = arrival_rate / service_rate
-                        rho = a / agents
-                        exp_neg_p = math.exp(-patience * (agents * service_rate - arrival_rate) / agents)
-                        if rho >= 1 or agents == 0:
-                            return 100.0
-                        num = (a ** agents / math.factorial(agents)) * (1 - exp_neg_p)
-                        denom = sum([(a ** n) / math.factorial(n) for n in range(agents)]) + num
-                        p_abandon = num / denom if denom > 0 else 1.0
-                        return p_abandon * 100
-
                     if agents_covered > 0:
                         prob_wait = erlang_c(traffic_intensity, agents_covered)
                         service_level = asa = abandon_rate = line_adherence = None
@@ -182,6 +176,5 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             # GRID 4: Shrinkage per interval & day
             st.subheader("Grid 4: In-Office Shrinkage (%)")
             st.dataframe(pd.DataFrame(results_shrink, columns=["Interval"] + weekdays_order))
-
         except Exception as e:
             st.error(f"Could not parse table data. Error: {e}")
