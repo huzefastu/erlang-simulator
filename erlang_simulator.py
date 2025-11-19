@@ -43,8 +43,8 @@ else:
         
         # Here, later, you’ll use `selected_kpi` to adjust your calculations/displays
 
-    except Exception as e:
-        st.error(f"Could not parse table data. Error: {e}")
+except Exception as e:
+    st.error(f"Could not parse table data. Error: {e}")
 else:
     st.info("Paste your interval-level call volumes (with headers) above to proceed.")
 #KPI Selector
