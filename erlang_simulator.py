@@ -21,8 +21,14 @@ target_kpi = st.sidebar.number_input(
     min_value=0, max_value=1000
 )
 asa_target = st.sidebar.number_input("ASA Target (seconds, always active)", value=20, min_value=1, max_value=1000)
-patience = st.sidebar.number_input("Avg Caller Patience (s)", 30, 1, 600,
-    disabled=False if selected_kpi == "Abandon Rate" else True)
+patience = st.sidebar.number_input(
+    "Avg Caller Patience (s)", 
+    min_value=1, 
+    max_value=600, 
+    value=30, 
+    step=1, 
+    disabled=False if selected_kpi == "Abandon Rate" else True
+)
 st.sidebar.header("Shrinkage Setup")
 in_office_shrinkage = st.sidebar.number_input("In-office Shrinkage (%)", value=20, min_value=0, max_value=100)
 out_office_shrinkage = st.sidebar.number_input("Out-of-office Shrinkage (%)", value=10, min_value=0, max_value=100)
