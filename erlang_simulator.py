@@ -20,7 +20,7 @@ st.sidebar.header("KPI Setup")
 kpi_options = [
     "Service Level (SLA)",
     "Abandon Rate",
-    "Line Adherence",  # Placeholder - won't simulate yet
+    "Line Adherence",
     "Average Speed of Answer (ASA)"
 ]
 selected_kpi = st.sidebar.selectbox("KPI for Simulation", kpi_options)
@@ -36,6 +36,13 @@ elif selected_kpi == "Average Speed of Answer (ASA)":
 
 asa_target = st.sidebar.number_input("ASA Target (seconds, always active)", value=20, min_value=1, max_value=1000)
 target_scope = st.sidebar.selectbox("Should KPI be met per:", ["Interval", "Day", "Week"])
+
+# Abandon Rate patience input
+if selected_kpi == "Abandon Rate":
+    st.sidebar.markdown("**Abandon Rate Simulation requires estimated caller patience (seconds):**")
+    patience = st.sidebar.number_input("Average Caller Patience (seconds)", value=30, min_value=1, max_value=600)
+else:
+    patience = st.sidebar.number_input("Average Caller Patience (seconds)", value=30, min_value=1, max_value=600, disabled=True)
 
 st.sidebar.header("Shrinkage Setup")
 in_office_shrinkage = st.sidebar.number_input("In-office Shrinkage (%) (breaks, coaching, meetings…)", value=20, min_value=0, max_value=100)
@@ -54,6 +61,7 @@ st.markdown(
 - **KPI:** {selected_kpi} (Target: {target_kpi})
 - **ASA Target (seconds):** {asa_target}
 - **KPI Target Scope:** {target_scope}
+- **Average Caller Patience (seconds):** {patience}
 - **In-office Shrinkage:** {in_office_shrinkage}%  
 - **Out-of-office Shrinkage:** {out_office_shrinkage}%  
 - **Number of Different Shifts:** {num_shifts}  
@@ -64,7 +72,6 @@ st.markdown(
 """
 )
 
-# ----- SIMULATION FOR ALL INTERVALS -----
 if sim_mode == "Volume-based Requirement (Erlang)":
     st.header("Paste Call Volume Table")
     st.markdown("*Copy 30-min interval data from Excel and paste here. Use tab or comma separated format. Header row should be: Interval, Sunday, Monday, ..., Saturday*")
@@ -83,10 +90,10 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             days = [col for col in df.columns if col.lower() != 'interval']
             selected_day = st.selectbox("Select Day to Simulate", days)
 
-            # Helper function for Erlang C
+            # Helper function: Erlang C (for SLA, ASA)
             def erlang_c(traffic_intensity, agents):
                 if agents <= traffic_intensity:
-                    return None  # Impossible situation (all agents busy)
+                    return None
                 traffic_power = traffic_intensity ** agents
                 agents_fact = math.factorial(agents)
                 sum_terms = sum([
@@ -97,24 +104,52 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                 P_wait = erlangC / (sum_terms + erlangC)
                 return P_wait
 
+            # Helper function: Erlang A (for abandon)
+            def erlang_a(arrival_rate, service_rate, agents, patience):
+                a = arrival_rate / service_rate
+                rho = a / agents
+
+                # Implement exact formula for Erlang A probability of abandonment
+                # Approximation for moderate call centers (as exact is complex)
+                exp_neg_p = math.exp(-patience * (agents * service_rate - arrival_rate) / agents)
+                if rho >= 1 or agents == 0:
+                    return 100.0  # Unstable system, all calls abandon
+                num = (a ** agents / math.factorial(agents)) * (1 - exp_neg_p)
+                denom = sum([(a ** n) / math.factorial(n) for n in range(agents)]) + num
+                p_abandon = num / denom if denom > 0 else 1.0
+                return p_abandon * 100
+
             output_rows = []
             shrinkage_mult = 1 / ((1 - in_office_shrinkage / 100) * (1 - out_office_shrinkage / 100))
             for i, row in df.iterrows():
                 call_volume = row[selected_day]
                 interval = row['Interval']
-                aht = asa_target
-                traffic_intensity = (call_volume * aht) / 1800  # 1800 sec = 30 min
+                aht = asa_target  # seconds
+                arrival_rate = call_volume / 1800  # calls per second for 30-min interval
+                service_rate = 1 / aht  # agents serve per second
+
+                traffic_intensity = arrival_rate * aht
                 baseline_agents = max(1, math.ceil(traffic_intensity + 1))
                 agent_needed = max(1, math.ceil(baseline_agents * shrinkage_mult))
-                prob_wait, asa, service_level = None, None, None
+
+                prob_wait, asa, service_level, abandon_rate = None, None, None, None
+
                 if agent_needed > traffic_intensity:
                     prob_wait = erlang_c(traffic_intensity, agent_needed)
                     if prob_wait is not None:
-                        asa = (prob_wait * aht) / (agent_needed - traffic_intensity)
-                        # Assuming 20sec SLA is relevant for service_level calculation
-                        service_level = (1 - prob_wait * math.exp(-(agent_needed - traffic_intensity) * (asa_target / aht))) * 100
+                        try:
+                            asa = (prob_wait * aht) / (agent_needed - traffic_intensity)
+                        except ZeroDivisionError:
+                            asa = None
+                        service_level = (1 - prob_wait * math.exp(-(agent_needed - traffic_intensity) * (asa_target / aht))) * 100 if prob_wait is not None else None
+                    # Abandon rate (Erlang A)
+                    if selected_kpi == "Abandon Rate":
+                        try:
+                            abandon_rate = erlang_a(arrival_rate, service_rate, agent_needed, patience)
+                        except Exception:
+                            abandon_rate = None
 
-                # Determine output KPI and if the target is met
+                # Dynamic output column and target
                 if selected_kpi == "Service Level (SLA)":
                     value = None if service_level is None else round(service_level, 2)
                     met = None if value is None else ("Yes" if value >= target_kpi else "No")
@@ -124,10 +159,9 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                     met = None if value is None else ("Yes" if value <= target_kpi else "No")
                     kpi_label = "ASA (seconds)"
                 elif selected_kpi == "Abandon Rate":
-                    # Erlang C does not directly calculate abandon, so placeholder for now
-                    value = None
-                    met = None
-                    kpi_label = "Abandon Rate (not simulated)"
+                    value = None if abandon_rate is None else round(abandon_rate, 2)
+                    met = None if value is None else ("Yes" if value <= target_kpi else "No")
+                    kpi_label = "Abandon Rate (%)"
                 elif selected_kpi == "Line Adherence":
                     value = None
                     met = None
@@ -167,7 +201,7 @@ elif sim_mode == "Hours-based Requirement (coverage)":
             hrs_df = pd.read_csv(io.StringIO(pasted_hours), sep=None, engine="python")
             st.subheader("Pasted Hours Requirement Table")
             st.dataframe(hrs_df)
-            st.info("Coverage mode simulation logic coming next...")  # Placeholder for further development!
+            st.info("Coverage mode simulation logic coming next...")  # Placeholder!
 
         except Exception as e:
             st.error(f"Could not parse table data. Error: {e}")
