@@ -5,8 +5,7 @@ import io
 
 st.title("Contact Center Erlang Simulation")
 
-# (Optional) Your parameter widgets can stay in the sidebar if you want
-
+# 1. PASTE VOLUME DATA
 st.header("Paste Call Volume Table")
 st.markdown("*Copy 30-min interval data from your Excel and paste here. Use tab or comma separated format. Header row should be: Interval, Sunday, Monday, ..., Saturday*")
 
@@ -20,41 +19,24 @@ if pasted_data.strip():
         df = pd.read_csv(io.StringIO(pasted_data), sep=None, engine="python")
         st.subheader("Pasted Call Volume Table")
         st.dataframe(df)
+
+        # 2. KPI SELECTOR
+        st.header("Select KPI for Simulation")
+        kpi_options = [
+            "Service Level (SLA)",
+            "Abandon Rate",
+            "Line Adherence",
+            "Average Speed of Answer (ASA)"
+        ]
+        selected_kpi = st.selectbox("Which KPI should the simulation focus on?", kpi_options)
+        st.write(f"**Current target KPI:** {selected_kpi}")
+
     except Exception as e:
         st.error(f"Could not parse table data. Error: {e}")
 else:
     st.info("Paste your interval-level call volumes (with headers) above to proceed.")
-#End Instructions for pasting
 
-
-
-
-#KPI Selector
-
-    st.header("Select KPI for Simulation")
-    kpi_options = [
-        "Service Level (SLA)",
-        "Abandon Rate",
-        "Line Adherence",
-        "Average Speed of Answer (ASA)"
-    ]
-    selected_kpi = st.selectbox("Which KPI should the simulation focus on?", kpi_options)
-    st.write(f"**Current target KPI:** {selected_kpi}")
-        
-        # Here, later, you’ll use `selected_kpi` to adjust your calculations/displays
-
-except Exception as e:
-    st.error(f"Could not parse table data. Error: {e}")
-else:
-    st.info("Paste your interval-level call volumes (with headers) above to proceed.")
-#KPI Selector
-
-
-
-
-
-st.title("Contact Center Erlang Simulation")
-
+# 3. SIDEBAR SIMULATION PARAMETERS (for single test interval for now)
 st.sidebar.header("Simulation Parameters")
 num_agents = st.sidebar.slider("Number of Agents", 1, 200, 50)
 call_volume = st.sidebar.number_input("Hourly Call Volume", min_value=1, value=300)
@@ -64,11 +46,9 @@ st.write(f"**Number of Agents:** {num_agents}")
 st.write(f"**Hourly Call Volume:** {call_volume}")
 st.write(f"**Average Handling Time:** {aht} seconds")
 
-# Agent Roster Automation (simple)
+# 4. ROSTER PREVIEW (remains static for now; will link to pasted table in future)
 intervals = [f"{hour}:00-{hour+1}:00" for hour in range(9, 17)]  # 9am to 5pm, 8 intervals
 agents_per_interval = num_agents // len(intervals)
-
-# Build DataFrame for roster
 roster = pd.DataFrame({
     "Interval": intervals,
     "Agents Assigned": [agents_per_interval] * len(intervals)
@@ -77,32 +57,23 @@ roster = pd.DataFrame({
 st.header("Automated Agent Roster")
 st.dataframe(roster)
 
-import math
-
+# 5. ERLANG C CALCULATION (test with sidebar values)
 def erlang_c(traffic_intensity, agents):
-    # Calculate Erlang C probability of waiting
     traffic_power = traffic_intensity ** agents
     agents_fact = math.factorial(agents)
-    
-    # Calculate sum for C formula denominator
     sum_terms = sum([
         (traffic_intensity ** n) / math.factorial(n)
         for n in range(agents)
     ])
-    
     erlangC = (traffic_power / agents_fact) * (agents / (agents - traffic_intensity))
     P_wait = erlangC / (sum_terms + erlangC)
     return P_wait
 
-# Calculate traffic intensity (A): A = (Call Volume per hour * AHT in seconds) / 3600
 traffic_intensity = (call_volume * aht) / 3600
 
-# Erlang C probability that a call waits
 if num_agents > traffic_intensity:
     prob_wait = erlang_c(traffic_intensity, num_agents)
-    # Expected ASA (average speed of answer in seconds)
     asa = (prob_wait * aht) / (num_agents - traffic_intensity)
-    # Example Service Level: % of calls answered within 20 seconds
     target_seconds = 20
     service_level = (1 - prob_wait * math.exp(-(num_agents - traffic_intensity) * (target_seconds / aht))) * 100
 else:
@@ -110,9 +81,7 @@ else:
     asa = None
     service_level = None
 
-# Output KPIs
 st.header("Simulation KPIs")
-
 if prob_wait is not None:
     st.write(f"**Probability Call Waits:** {prob_wait:.2%}")
     st.write(f"**Expected ASA (seconds):** {asa:.2f}")
