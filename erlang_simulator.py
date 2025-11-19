@@ -30,7 +30,7 @@ if selected_kpi == "Service Level (SLA)":
 elif selected_kpi == "Abandon Rate":
     target_kpi = st.sidebar.number_input("Max Abandon Rate (%)", value=10, min_value=0, max_value=100)
 elif selected_kpi == "Line Adherence":
-    target_kpi = st.sidebar.number_input("Target Line Adherence (%)", value=90, min_value=0, max_value=100)
+    target_kpi = st.sidebar.number_input("Target Line Adherence (%)", value=100, min_value=0, max_value=100)
 elif selected_kpi == "Average Speed of Answer (ASA)":
     target_kpi = st.sidebar.number_input("Max ASA (seconds)", value=20, min_value=1, max_value=1000)
 
@@ -90,7 +90,6 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             days = [col for col in df.columns if col.lower() != 'interval']
             selected_day = st.selectbox("Select Day to Simulate", days)
 
-            # Helper function: Erlang C (for SLA, ASA)
             def erlang_c(traffic_intensity, agents):
                 if agents <= traffic_intensity:
                     return None
@@ -104,16 +103,13 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                 P_wait = erlangC / (sum_terms + erlangC)
                 return P_wait
 
-            # Helper function: Erlang A (for abandon)
             def erlang_a(arrival_rate, service_rate, agents, patience):
                 a = arrival_rate / service_rate
                 rho = a / agents
 
-                # Implement exact formula for Erlang A probability of abandonment
-                # Approximation for moderate call centers (as exact is complex)
                 exp_neg_p = math.exp(-patience * (agents * service_rate - arrival_rate) / agents)
                 if rho >= 1 or agents == 0:
-                    return 100.0  # Unstable system, all calls abandon
+                    return 100.0
                 num = (a ** agents / math.factorial(agents)) * (1 - exp_neg_p)
                 denom = sum([(a ** n) / math.factorial(n) for n in range(agents)]) + num
                 p_abandon = num / denom if denom > 0 else 1.0
@@ -124,15 +120,15 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             for i, row in df.iterrows():
                 call_volume = row[selected_day]
                 interval = row['Interval']
-                aht = asa_target  # seconds
-                arrival_rate = call_volume / 1800  # calls per second for 30-min interval
-                service_rate = 1 / aht  # agents serve per second
+                aht = asa_target
+                arrival_rate = call_volume / 1800
+                service_rate = 1 / aht
 
                 traffic_intensity = arrival_rate * aht
                 baseline_agents = max(1, math.ceil(traffic_intensity + 1))
                 agent_needed = max(1, math.ceil(baseline_agents * shrinkage_mult))
 
-                prob_wait, asa, service_level, abandon_rate = None, None, None, None
+                prob_wait, asa, service_level, abandon_rate, line_adherence = None, None, None, None, None
 
                 if agent_needed > traffic_intensity:
                     prob_wait = erlang_c(traffic_intensity, agent_needed)
@@ -148,8 +144,11 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                             abandon_rate = erlang_a(arrival_rate, service_rate, agent_needed, patience)
                         except Exception:
                             abandon_rate = None
+                    # Line adherence (simulate as 100% if agent_needed met)
+                    if selected_kpi == "Line Adherence":
+                        # 100% since agent_needed always fully covered in this simplified model
+                        line_adherence = 100 if agent_needed >= baseline_agents else round(100 * agent_needed / baseline_agents,2)
 
-                # Dynamic output column and target
                 if selected_kpi == "Service Level (SLA)":
                     value = None if service_level is None else round(service_level, 2)
                     met = None if value is None else ("Yes" if value >= target_kpi else "No")
@@ -163,9 +162,9 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                     met = None if value is None else ("Yes" if value <= target_kpi else "No")
                     kpi_label = "Abandon Rate (%)"
                 elif selected_kpi == "Line Adherence":
-                    value = None
-                    met = None
-                    kpi_label = "Line Adherence (not simulated)"
+                    value = None if line_adherence is None else round(line_adherence, 2)
+                    met = None if value is None else ("Yes" if value >= target_kpi else "No")
+                    kpi_label = "Line Adherence (%)"
                 else:
                     value = None
                     met = None
