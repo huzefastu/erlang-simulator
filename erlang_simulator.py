@@ -20,6 +20,7 @@ target_kpi = st.sidebar.number_input(
 )
 aht = st.sidebar.number_input("Average Handling Time (AHT, seconds)", min_value=1, max_value=3600, value=150, step=1)
 asa_target = st.sidebar.number_input("SLA Window (seconds)", value=20, min_value=1, max_value=600)
+patience = st.sidebar.number_input("Caller Patience (s)", min_value=1, max_value=600, value=30, step=1)
 # Shrinkage
 st.sidebar.header("Shrinkage Setup")
 in_office_shrinkage = st.sidebar.number_input("In-office Shrinkage (%)", value=20, min_value=0, max_value=100)
@@ -60,6 +61,17 @@ def agents_needed_erlang_c(volume, aht, sla_seconds, sla_target, max_agents=100)
             if sla >= sla_target:
                 return agents
     return max_agents
+
+def erlang_a(arrival_rate, service_rate, agents, patience):
+    a = arrival_rate / service_rate
+    rho = a / agents
+    exp_neg_p = math.exp(-patience * (agents * service_rate - arrival_rate) / agents)
+    if rho >= 1 or agents == 0:
+        return 100.0
+    num = (a ** agents / math.factorial(agents)) * (1 - exp_neg_p)
+    denom = sum([(a ** n) / math.factorial(n) for n in range(agents)]) + num
+    p_abandon = num / denom if denom > 0 else 1.0
+    return p_abandon * 100
 
 if sim_mode == "Volume-based Requirement (Erlang)":
     st.header("Paste Call Volume Table")
@@ -126,10 +138,7 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                                 coverage_matrix[idx][day_idx] += 1
                     pointer += 1
 
-            # SHRINKAGE FACTOR (if needed elsewhere)
-            shrinkage_mult = 1 / ((1 - in_office_shrinkage / 100) * (1 - out_office_shrinkage / 100))
-
-            # Grids
+            # MAIN GRIDS
             results_needed, results_sched, results_open = [], [], []
             for idx, interval in enumerate(intervals):
                 row_needed = [interval]
@@ -168,36 +177,62 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             st.dataframe(pd.DataFrame(results_sched, columns=["Interval"] + weekdays_order))
             st.subheader("Grid 3: Agents Open (After In-Office Shrinkage)")
             st.dataframe(pd.DataFrame(results_open, columns=["Interval"] + weekdays_order))
+
+            # KPI & Overs/Unders grids
+            results_kpi, results_over = [], []
+            for idx, interval in enumerate(intervals):
+                row_kpi = [interval]
+                row_over = [interval]
+                for day_idx, day in enumerate(weekdays_order):
+                    call_volume = df.loc[idx, day]
+                    agents_scheduled = coverage_matrix[idx][day_idx]
+                    agents_needed = results_needed[idx][day_idx + 1]
+                    over_under = agents_scheduled - agents_needed
+
+                    calls_per_sec = float(call_volume) / 1800
+                    traffic_intensity = calls_per_sec * aht
+
+                    prob_wait = erlang_c(traffic_intensity, agents_scheduled)
+                    service_level = asa = abandon_rate = line_adherence = None
+                    if prob_wait is not None and agents_scheduled > traffic_intensity:
+                        asa = (prob_wait * aht) / (agents_scheduled - traffic_intensity)
+                        service_level = (1 - prob_wait * math.exp(-(agents_scheduled - traffic_intensity) * (asa_target / aht))) * 100
+                    if selected_kpi == "Abandon Rate":
+                        abandon_rate = erlang_a(calls_per_sec, 1/aht, agents_scheduled, patience)
+                    if selected_kpi == "Line Adherence":
+                        line_adherence = round(100 * agents_scheduled / agents_needed, 2) if agents_needed > 0 else 100
+
+                    if selected_kpi == "Service Level (SLA)":
+                        value = None if service_level is None else round(service_level, 2)
+                    elif selected_kpi == "Average Speed of Answer (ASA)":
+                        value = None if asa is None else round(asa, 2)
+                    elif selected_kpi == "Abandon Rate":
+                        value = None if abandon_rate is None else round(abandon_rate, 2)
+                    elif selected_kpi == "Line Adherence":
+                        value = None if line_adherence is None else round(line_adherence, 2)
+                    else:
+                        value = None
+
+                    row_kpi.append(value)
+                    row_over.append(over_under)
+                results_kpi.append(row_kpi)
+                results_over.append(row_over)
+
+            # Day averages for these grids
+            row_avg_kpi = ["Day Average"]
+            row_avg_over = ["Day Average"]
+            for day_idx in range(len(weekdays_order)):
+                vals_kpi = [results_kpi[i][day_idx + 1] for i in range(len(results_kpi))]
+                vals_over = [results_over[i][day_idx + 1] for i in range(len(results_over))]
+                valid_kpi = [v for v in vals_kpi if v is not None]
+                row_avg_kpi.append(round(sum(valid_kpi)/len(valid_kpi),2) if valid_kpi else None)
+                row_avg_over.append(round(sum(vals_over)/len(vals_over),2))
+            results_kpi.append(row_avg_kpi)
+            results_over.append(row_avg_over)
+
+            st.subheader("Grid 4: Selected KPI Per Interval & Day")
+            st.dataframe(pd.DataFrame(results_kpi, columns=["Interval"] + weekdays_order))
+            st.subheader("Grid 5: Overs/Unders (Scheduled - Needed)")
+            st.dataframe(pd.DataFrame(results_over, columns=["Interval"] + weekdays_order))
         except Exception as e:
             st.error(f"Could not parse table data. Error: {e}")
-
-results_kpi, results_over = [], []
-
-for idx, interval in enumerate(intervals):
-    row_kpi = [interval]
-    row_over = [interval]
-    for day_idx, day in enumerate(weekdays_order):
-        call_volume = df.loc[idx, day]
-        agents_scheduled = coverage_matrix[idx][day_idx]
-        agents_needed = results_needed[idx][day_idx + 1]  # from previous grid!
-        over_under = agents_scheduled - agents_needed
-
-        calls_per_sec = float(call_volume) / 1800
-        traffic_intensity = calls_per_sec * aht
-
-        # KPI calculations
-        prob_wait = erlang_c(traffic_intensity, agents_scheduled)
-        service_level = asa = abandon_rate = line_adherence = None
-        if prob_wait is not None and agents_scheduled > traffic_intensity:
-            asa = (prob_wait * aht) / (agents_scheduled - traffic_intensity)
-            service_level = (1 - prob_wait * math.exp(-(agents_scheduled - traffic_intensity) * (asa_target / aht))) * 100
-        if selected_kpi == "Abandon Rate":
-            def erlang_a(arrival_rate, service_rate, agents, patience):
-                a = arrival_rate / service_rate
-                rho = a / agents
-                exp_neg_p = math.exp(-patience * (agents * service_rate - arrival_rate) / agents)
-                if rho >= 1 or agents == 0:
-                    return 100.0
-                num = (a ** agents / math.factorial(agents)) * (1 - exp_neg_p)
-                denom = sum([(a ** n) / math.factorial(n) for n in range(agents)]) + num
-                p_abandon = num / denom if denom > 0 else 1.0
