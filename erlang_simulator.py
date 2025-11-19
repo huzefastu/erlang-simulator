@@ -17,7 +17,6 @@ pasted_data = st.text_area(
 
 if pasted_data.strip():
     try:
-        # Try to interpret as CSV or TSV
         df = pd.read_csv(io.StringIO(pasted_data), sep=None, engine="python")
         st.subheader("Pasted Call Volume Table")
         st.dataframe(df)
@@ -31,13 +30,7 @@ else:
 
 
 #KPI Selector
-if pasted_data.strip():
-    try:
-        df = pd.read_csv(io.StringIO(pasted_data), sep=None, engine="python")
-        st.subheader("Pasted Call Volume Table")
-        st.dataframe(df)
-        
-        # --- KPI Selection ---
+
         st.header("Select KPI for Simulation")
         kpi_options = [
             "Service Level (SLA)",
