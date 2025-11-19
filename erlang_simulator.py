@@ -26,6 +26,40 @@ if pasted_data.strip():
 else:
     st.info("Paste your interval-level call volumes (with headers) above to proceed.")
 #End Instructions for pasting
+
+
+
+
+#KPI Selector
+if pasted_data.strip():
+    try:
+        df = pd.read_csv(io.StringIO(pasted_data), sep=None, engine="python")
+        st.subheader("Pasted Call Volume Table")
+        st.dataframe(df)
+        
+        # --- KPI Selection ---
+        st.header("Select KPI for Simulation")
+        kpi_options = [
+            "Service Level (SLA)",
+            "Abandon Rate",
+            "Line Adherence",
+            "Average Speed of Answer (ASA)"
+        ]
+        selected_kpi = st.selectbox("Which KPI should the simulation focus on?", kpi_options)
+        st.write(f"**Current target KPI:** {selected_kpi}")
+        
+        # Here, later, you’ll use `selected_kpi` to adjust your calculations/displays
+
+    except Exception as e:
+        st.error(f"Could not parse table data. Error: {e}")
+else:
+    st.info("Paste your interval-level call volumes (with headers) above to proceed.")
+#KPI Selector
+
+
+
+
+
 st.title("Contact Center Erlang Simulation")
 
 st.sidebar.header("Simulation Parameters")
