@@ -44,3 +44,55 @@ asa_target = st.sidebar.number_input("ASA Target (seconds, always active)", valu
 target_scope = st.sidebar.selectbox(
     "Should KPI be met per:",
     ["Interval", "Day", "Week"]
+)
+
+# Show selected KPI/target/ASA/Scope on the main page for confirmation
+st.markdown(
+    f"""**Sidebar KPI Setup**:  
+- **KPI:** {selected_kpi} (Target: {target_kpi})
+- **ASA Target (seconds):** {asa_target}
+- **KPI Target Scope:** {target_scope}
+"""
+)
+
+# ---- MAIN PAGE: Paste tables and logic dependent on mode ----
+if sim_mode == "Volume-based Requirement (Erlang)":
+    st.header("Paste Call Volume Table")
+    st.markdown("*Copy 30-min interval data from Excel and paste here. Use tab or comma separated format. Header row should be: Interval, Sunday, Monday, ..., Saturday*")
+
+    pasted_data = st.text_area(
+        "Paste your table data below (include header):",
+        height=300
+    )
+
+    if pasted_data.strip():
+        try:
+            df = pd.read_csv(io.StringIO(pasted_data), sep=None, engine="python")
+            st.subheader("Pasted Call Volume Table")
+            st.dataframe(df)
+            # Additional logic/calculation goes here...
+
+        except Exception as e:
+            st.error(f"Could not parse table data. Error: {e}")
+    else:
+        st.info("Paste your interval-level call volumes (with headers) above to proceed.")
+
+elif sim_mode == "Hours-based Requirement (coverage)":
+    st.header("Paste Table of Hours Required per Interval")
+    st.markdown("*Copy hours required for each 30-min interval, by day. Same format as volume table, header row: Interval, Sunday, Monday, ..., Saturday*")
+    pasted_hours = st.text_area(
+        "Paste your table data below (include header):",
+        height=300
+    )
+
+    if pasted_hours.strip():
+        try:
+            hrs_df = pd.read_csv(io.StringIO(pasted_hours), sep=None, engine="python")
+            st.subheader("Pasted Hours Requirement Table")
+            st.dataframe(hrs_df)
+            # Additional logic/calculation goes here...
+
+        except Exception as e:
+            st.error(f"Could not parse table data. Error: {e}")
+    else:
+        st.info("Paste your interval-level hours required (with headers) above to proceed.")
