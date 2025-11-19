@@ -43,16 +43,23 @@ days_in_week = 7
 
 if sim_mode == "Volume-based Requirement (Erlang)":
     st.header("Paste Call Volume Table")
-    st.markdown("*Paste with header: Interval, Sunday, Monday, ..., Saturday*")
-    pasted_data = st.text_area("Paste your table data below (include header):", height=300)
+    st.markdown("*Paste volumes only—headers are assigned automatically!*")
+    st.markdown("Intervals should be pasted in first column, followed by 7 days (Sunday to Saturday), all tab/comma separated.")
+
+    pasted_data = st.text_area("Paste volume table below (no header!):", height=400)
+    column_headers = ["Interval"] + weekdays_order
+
     if pasted_data.strip():
         try:
-            df = pd.read_csv(io.StringIO(pasted_data), sep=None, engine="python")
-            if "Interval" not in df.columns:
-                st.error("Header row must include 'Interval'!")
+            # Parse input and assign headers (no header required in input)
+            df = pd.read_csv(io.StringIO(pasted_data), sep=None, engine="python", header=None)
+            if df.shape[1] != len(column_headers):
+                st.error(f"Expected {len(column_headers)} columns (Interval + 7 days). Found {df.shape[1]}.")
                 st.stop()
+            df.columns = column_headers
+
             intervals = df["Interval"].tolist()
-            all_days = [d for d in df.columns if d != "Interval"]
+            all_days = weekdays_order
 
             # Week-off assignment
             week_offs_per_agent = days_in_week - working_days_per_week
@@ -87,9 +94,8 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             st.subheader("Grid 1: Agent Roster")
             st.dataframe(pd.DataFrame(agent_roster, columns=["Agent ID", "Shift Start", "Shift End", "Week Off 1", "Week Off 2"]))
 
-            # Compute coverage for all days/intervals
+            # Coverage for all days/intervals
             shrinkage_mult = 1 / ((1 - in_office_shrinkage / 100) * (1 - out_office_shrinkage / 100))
-            # Build 2D coverage: coverage[interval_idx][day_idx]
             coverage_matrix = [[0 for _ in range(days_in_week)] for _ in range(num_intervals)]
             pointer = 0
             for shift_idx, shift_start in enumerate(shift_starts):
@@ -126,19 +132,63 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                 p_abandon = num / denom if denom > 0 else 1.0
                 return p_abandon * 100
 
+            # Build all grids and day-level stats
             results_kpi, results_over, results_shrink = [], [], []
+            col_totals_kpi, col_totals_over, col_totals_shrink = ["Day Total"], ["Day Total"], ["Day Total"]
+            for day_idx, day in enumerate(weekdays_order):
+                sum_kpi, sum_over, sum_shrink = 0, 0, 0
+                count_kpi = 0
+                for idx, interval in enumerate(intervals):
+                    agents_covered = coverage_matrix[idx][day_idx]
+                    call_volume = df.loc[idx, day]
+                    arrival_rate = float(call_volume) / 1800
+                    traffic_intensity = arrival_rate * aht
+                    agents_needed = max(1, math.ceil((arrival_rate * aht + 1) * shrinkage_mult))
+                    over_under = agents_covered - agents_needed
+                    if agents_covered > 0:
+                        prob_wait = erlang_c(traffic_intensity, agents_covered)
+                        service_level = asa = abandon_rate = line_adherence = None
+                        if prob_wait is not None and agents_covered > traffic_intensity:
+                            asa = (prob_wait * aht) / (agents_covered - traffic_intensity)
+                            service_level = (1 - prob_wait * math.exp(-(agents_covered - traffic_intensity) * (asa_target / aht))) * 100
+                        if selected_kpi == "Abandon Rate":
+                            abandon_rate = erlang_a(arrival_rate, 1/aht, agents_covered, patience)
+                        if selected_kpi == "Line Adherence":
+                            line_adherence = round(100 * agents_covered / agents_needed, 2) if agents_needed > 0 else 100
+                    else:
+                        service_level = asa = abandon_rate = line_adherence = None
+                    if selected_kpi == "Service Level (SLA)":
+                        value = None if service_level is None else round(service_level, 2)
+                    elif selected_kpi == "Average Speed of Answer (ASA)":
+                        value = None if asa is None else round(asa, 2)
+                    elif selected_kpi == "Abandon Rate":
+                        value = None if abandon_rate is None else round(abandon_rate, 2)
+                    elif selected_kpi == "Line Adherence":
+                        value = None if line_adherence is None else round(line_adherence, 2)
+                    else:
+                        value = None
+                    if value is not None:
+                        sum_kpi += value
+                        count_kpi += 1
+                    sum_over += over_under
+                    sum_shrink += in_office_shrinkage
+                # For day total, show sum or avg as appropriate
+                col_totals_kpi.append(round(sum_kpi / count_kpi,2) if count_kpi > 0 else None)
+                col_totals_over.append(int(sum_over))
+                col_totals_shrink.append(sum_shrink)  # All intervals use same shrinkage %
+
+            # Grids construction
             for idx, interval in enumerate(intervals):
                 row_kpi = [interval]
                 row_over = [interval]
                 row_shrink = [interval]
                 for day_idx, day in enumerate(weekdays_order):
                     agents_covered = coverage_matrix[idx][day_idx]
-                    call_volume = df.loc[idx, day] if day in df.columns else 0
+                    call_volume = df.loc[idx, day]
                     arrival_rate = float(call_volume) / 1800
                     traffic_intensity = arrival_rate * aht
                     agents_needed = max(1, math.ceil((arrival_rate * aht + 1) * shrinkage_mult))
                     over_under = agents_covered - agents_needed
-                    # KPI calculation
                     if agents_covered > 0:
                         prob_wait = erlang_c(traffic_intensity, agents_covered)
                         service_level = asa = abandon_rate = line_adherence = None
@@ -167,14 +217,17 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                 results_kpi.append(row_kpi)
                 results_over.append(row_over)
                 results_shrink.append(row_shrink)
-            # GRID 2: KPI per interval & day
+            # Add day-level row at bottom
+            results_kpi.append(col_totals_kpi)
+            results_over.append(col_totals_over)
+            results_shrink.append(col_totals_shrink)
+
             st.subheader("Grid 2: KPI Per Interval & Day")
             st.dataframe(pd.DataFrame(results_kpi, columns=["Interval"] + weekdays_order))
-            # GRID 3: Over/Under per interval & day
             st.subheader("Grid 3: Overs/Unders")
             st.dataframe(pd.DataFrame(results_over, columns=["Interval"] + weekdays_order))
-            # GRID 4: Shrinkage per interval & day
             st.subheader("Grid 4: In-Office Shrinkage (%)")
             st.dataframe(pd.DataFrame(results_shrink, columns=["Interval"] + weekdays_order))
+
         except Exception as e:
             st.error(f"Could not parse table data. Error: {e}")
