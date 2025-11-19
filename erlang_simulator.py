@@ -31,15 +31,15 @@ else:
 
 #KPI Selector
 
-        st.header("Select KPI for Simulation")
-        kpi_options = [
-            "Service Level (SLA)",
-            "Abandon Rate",
-            "Line Adherence",
-            "Average Speed of Answer (ASA)"
-        ]
-        selected_kpi = st.selectbox("Which KPI should the simulation focus on?", kpi_options)
-        st.write(f"**Current target KPI:** {selected_kpi}")
+    st.header("Select KPI for Simulation")
+    kpi_options = [
+        "Service Level (SLA)",
+        "Abandon Rate",
+        "Line Adherence",
+        "Average Speed of Answer (ASA)"
+    ]
+    selected_kpi = st.selectbox("Which KPI should the simulation focus on?", kpi_options)
+    st.write(f"**Current target KPI:** {selected_kpi}")
         
         # Here, later, you’ll use `selected_kpi` to adjust your calculations/displays
 
