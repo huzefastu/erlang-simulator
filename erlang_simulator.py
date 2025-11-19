@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import math
 import io
-import numpy as np
 
 st.title("Contact Center Erlang Simulation")
 
@@ -18,12 +17,7 @@ st.write(f"**Simulation mode selected:** {sim_mode}")
 
 # ---- SIDEBAR CONTROLS ----
 st.sidebar.header("KPI Setup")
-kpi_options = [
-    "Service Level (SLA)",
-    "Abandon Rate",
-    "Line Adherence",
-    "Average Speed of Answer (ASA)"
-]
+kpi_options = ["Service Level (SLA)", "Abandon Rate", "Line Adherence", "Average Speed of Answer (ASA)"]
 selected_kpi = st.sidebar.selectbox("KPI for Simulation", kpi_options)
 
 if selected_kpi == "Service Level (SLA)":
@@ -57,14 +51,15 @@ min_shift_length = st.sidebar.number_input("Minimum Shift Length (hours)", min_v
 max_shift_length = st.sidebar.number_input("Maximum Shift Length (hours)", min_value=1, max_value=12, value=8)
 total_agents = st.sidebar.number_input("Total FTE For Day", value=30, min_value=1, max_value=1000)
 
-# Defaults
 operating_hours = 24
 interval_length_min = 30
 
-st.markdown(
-    f"""**Sidebar KPI, Shrinkage, Shift/Agent Rules Setup**:  
+weekdays_order = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
+st.markdown(f"""**Sidebar KPI, Shrinkage, Shift/Agent Rules Setup**:  
 - **Shifts:** {num_shifts} × {min_shift_length}-{max_shift_length} hr  
-- **Total agents (FTE):** {total_agents}
+- **Total agents (FTE):** {total_agents}  
+- **Working Days Per Agent:** {working_days_per_week}
 """)
 
 if sim_mode == "Volume-based Requirement (Erlang)":
@@ -83,21 +78,41 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                 st.stop()
 
             days = [col for col in df.columns if col.lower() != 'interval']
-            selected_day = st.selectbox("Select Day to Simulate", days)
+            # Days in pasted table may be different order; force our standard
+            valid_days = [d for d in weekdays_order if d in days]
+            selected_day = st.selectbox("Select Day to Simulate", valid_days)
+
+            # Week-off assignment logic
+            days_in_week = 7
+            week_offs_per_agent = days_in_week - working_days_per_week
+            agent_week_off_distribution = [[] for _ in range(days_in_week)]
+
+            # Distribute total_agents as evenly as possible having weekoffs on each day
+            agent_indices = list(range(total_agents))
+            # Assign week-offs in round-robin order to balance agent coverage
+            for idx, agent in enumerate(agent_indices):
+                week_off_days = []
+                for w in range(week_offs_per_agent):
+                    week_off_day = (idx + w) % days_in_week
+                    week_off_days.append(week_off_day)
+                    agent_week_off_distribution[week_off_day].append(agent)
+            # For the selected day, available agents = total_agents - week_off_count on that day
+            selected_day_idx = weekdays_order.index(selected_day)
+            agents_today = total_agents - len(agent_week_off_distribution[selected_day_idx])
+
+            st.info(f"{agents_today} agents are available for shifts on {selected_day}, based on {total_agents} FTE and {working_days_per_week} working days/week.")
 
             # ---- Shift Auto-generation ----
             num_intervals = int(operating_hours * 60 / interval_length_min)
-            shift_length = max(min_shift_length, min(max_shift_length, int((operating_hours / num_shifts))))  # round shift to fill day
+            shift_length = max(min_shift_length, min(max_shift_length, int((operating_hours / num_shifts))))
             intervals_per_shift = int((shift_length * 60) / interval_length_min)
-            # Shift start intervals (evenly spread)
             shift_starts = [int(i * num_intervals / num_shifts) for i in range(num_shifts)]
             intervals = df['Interval'].tolist()
-            # For now, evenly split agents per shift
-            agents_per_shift = [int(total_agents // num_shifts)] * num_shifts
-            for i in range(total_agents % num_shifts):
-                agents_per_shift[i] += 1  # distribute extra agents if not even
 
-            # Build shift schedule table
+            agents_per_shift = [int(agents_today // num_shifts)] * num_shifts
+            for i in range(agents_today % num_shifts):
+                agents_per_shift[i] += 1
+
             shifts = []
             for idx, start in enumerate(shift_starts):
                 s_start = intervals[start % num_intervals]
@@ -120,7 +135,6 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                     idx = (shift_start + k) % num_intervals
                     coverage[idx] += agents_per_shift[i]
 
-            # ---- Simulation & KPI Calculation ----
             def erlang_c(traffic_intensity, agents):
                 if agents <= traffic_intensity:
                     return None
@@ -157,7 +171,6 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                 agents_needed = max(1, math.ceil((arrival_rate * aht + 1) * shrinkage_mult))
                 agents_covered = coverage[i]
 
-                # Only calculate queueing KPIs if agent is available
                 value, met, kpi_label = None, None, selected_kpi
                 prob_wait, asa, service_level, abandon_rate, line_adherence = None, None, None, None, None
 
@@ -205,6 +218,11 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             output_df = pd.DataFrame(output_rows)
             st.subheader(f"Simulation Results for {selected_day}")
             st.dataframe(output_df)
+
+            # Show week-off distribution
+            week_off_summary = {weekdays_order[d]: len(v) for d, v in enumerate(agent_week_off_distribution)}
+            st.subheader("Week-off Distribution")
+            st.write(pd.DataFrame(list(week_off_summary.items()), columns=['Day', 'Agents On Week-Off']))
 
         except Exception as e:
             st.error(f"Could not parse table data. Error: {e}")
