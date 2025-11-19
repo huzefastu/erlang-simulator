@@ -38,6 +38,17 @@ else:
 
 # 3. SIDEBAR SIMULATION PARAMETERS (for single test interval for now)
 st.sidebar.header("Simulation Parameters")
+
+st.header("Simulation Mode")
+sim_mode = st.radio(
+    "Choose simulation mode:",
+    [
+        "Volume-based Requirement (Erlang)",
+        "Hours-based Requirement (coverage)"
+    ]
+)
+st.write(f"**Simulation mode selected:** {sim_mode}")
+
 num_agents = st.sidebar.slider("Number of Agents", 1, 200, 50)
 call_volume = st.sidebar.number_input("Hourly Call Volume", min_value=1, value=300)
 aht = st.sidebar.number_input("Average Handling Time (seconds)", min_value=1, value=180)
