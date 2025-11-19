@@ -231,3 +231,45 @@ if sim_mode == "Volume-based Requirement (Erlang)":
 
         except Exception as e:
             st.error(f"Could not parse table data. Error: {e}")
+
+
+results_needed_noshrink, results_scheduled, results_open = [], [], []
+for idx, interval in enumerate(intervals):
+    row_needed = [interval]
+    row_sched = [interval]
+    row_open = [interval]
+    for day_idx, day in enumerate(weekdays_order):
+        call_volume = df.loc[idx, day]
+        arrival_rate = float(call_volume) / 1800
+        traffic_intensity = arrival_rate * aht
+        agents_needed_noshrink = math.ceil(traffic_intensity + 1)
+        agents_scheduled = coverage_matrix[idx][day_idx]
+        agents_open = round(agents_scheduled * (1 - in_office_shrinkage / 100), 2)
+        row_needed.append(agents_needed_noshrink)
+        row_sched.append(agents_scheduled)
+        row_open.append(agents_open)
+    results_needed_noshrink.append(row_needed)
+    results_scheduled.append(row_sched)
+    results_open.append(row_open)
+
+# Day average for each grid (row at bottom)
+row_avg_needed = ["Day Average"]
+row_avg_sched = ["Day Average"]
+row_avg_open = ["Day Average"]
+for day_idx in range(len(weekdays_order)):
+    needed_vals = [results_needed_noshrink[i][day_idx + 1] for i in range(len(results_needed_noshrink))]
+    sched_vals = [results_scheduled[i][day_idx + 1] for i in range(len(results_scheduled))]
+    open_vals = [results_open[i][day_idx + 1] for i in range(len(results_open))]
+    row_avg_needed.append(round(sum(needed_vals) / len(needed_vals), 2))
+    row_avg_sched.append(round(sum(sched_vals) / len(sched_vals), 2))
+    row_avg_open.append(round(sum(open_vals) / len(open_vals), 2))
+results_needed_noshrink.append(row_avg_needed)
+results_scheduled.append(row_avg_sched)
+results_open.append(row_avg_open)
+
+st.subheader("Grid 1: Agents Needed (No Shrinkage)")
+st.dataframe(pd.DataFrame(results_needed_noshrink, columns=["Interval"] + weekdays_order))
+st.subheader("Grid 2: Agents Scheduled (Roster/Shift)")
+st.dataframe(pd.DataFrame(results_scheduled, columns=["Interval"] + weekdays_order))
+st.subheader("Grid 3: Agents Open (After In-Office Shrinkage)")
+st.dataframe(pd.DataFrame(results_open, columns=["Interval"] + weekdays_order))
