@@ -20,7 +20,7 @@ st.sidebar.header("KPI Setup")
 kpi_options = [
     "Service Level (SLA)",
     "Abandon Rate",
-    "Line Adherence",
+    "Line Adherence",  # Placeholder - won't simulate yet
     "Average Speed of Answer (ASA)"
 ]
 selected_kpi = st.sidebar.selectbox("KPI for Simulation", kpi_options)
@@ -76,7 +76,10 @@ if sim_mode == "Volume-based Requirement (Erlang)":
             st.subheader("Pasted Call Volume Table")
             st.dataframe(df)
 
-            # Detect which day is being worked on (let’s pick first non-Interval column for demo)
+            if 'Interval' not in df.columns:
+                st.error(f"Your pasted data does not have a column labeled 'Interval'. Columns found: {list(df.columns)}")
+                st.stop()
+
             days = [col for col in df.columns if col.lower() != 'interval']
             selected_day = st.selectbox("Select Day to Simulate", days)
 
@@ -94,37 +97,52 @@ if sim_mode == "Volume-based Requirement (Erlang)":
                 P_wait = erlangC / (sum_terms + erlangC)
                 return P_wait
 
-            # Calculate agent requirement and KPIs for every interval
             output_rows = []
-            # Shrinkage: Agent requirement must be upscaled for shrinkage inputs
             shrinkage_mult = 1 / ((1 - in_office_shrinkage / 100) * (1 - out_office_shrinkage / 100))
-            # FOR EVERY INTERVAL
             for i, row in df.iterrows():
                 call_volume = row[selected_day]
                 interval = row['Interval']
-                # Get AHT (use sidebar ASA target for now, or let user input)
                 aht = asa_target
-                traffic_intensity = (call_volume * aht) / 1800  # For 30-min interval, use 1800 seconds
-                # Start with minimal agent requirement calculation, upscale by shrinkage
-                baseline_agents = math.ceil(traffic_intensity + 1)  # Add 1 for queueing
-                # Upscale agent need for shrinkage
-                agent_needed = math.ceil(baseline_agents * shrinkage_mult)
-                # KPIs using theoretical agent count
+                traffic_intensity = (call_volume * aht) / 1800  # 1800 sec = 30 min
+                baseline_agents = max(1, math.ceil(traffic_intensity + 1))
+                agent_needed = max(1, math.ceil(baseline_agents * shrinkage_mult))
                 prob_wait, asa, service_level = None, None, None
                 if agent_needed > traffic_intensity:
                     prob_wait = erlang_c(traffic_intensity, agent_needed)
                     if prob_wait is not None:
                         asa = (prob_wait * aht) / (agent_needed - traffic_intensity)
-                        target_seconds = asa_target
-                        service_level = (1 - prob_wait * math.exp(-(agent_needed - traffic_intensity) * (target_seconds / aht))) * 100
+                        # Assuming 20sec SLA is relevant for service_level calculation
+                        service_level = (1 - prob_wait * math.exp(-(agent_needed - traffic_intensity) * (asa_target / aht))) * 100
+
+                # Determine output KPI and if the target is met
+                if selected_kpi == "Service Level (SLA)":
+                    value = None if service_level is None else round(service_level, 2)
+                    met = None if value is None else ("Yes" if value >= target_kpi else "No")
+                    kpi_label = "Service Level (%)"
+                elif selected_kpi == "Average Speed of Answer (ASA)":
+                    value = None if asa is None else round(asa, 2)
+                    met = None if value is None else ("Yes" if value <= target_kpi else "No")
+                    kpi_label = "ASA (seconds)"
+                elif selected_kpi == "Abandon Rate":
+                    # Erlang C does not directly calculate abandon, so placeholder for now
+                    value = None
+                    met = None
+                    kpi_label = "Abandon Rate (not simulated)"
+                elif selected_kpi == "Line Adherence":
+                    value = None
+                    met = None
+                    kpi_label = "Line Adherence (not simulated)"
+                else:
+                    value = None
+                    met = None
+                    kpi_label = selected_kpi
+
                 output_rows.append({
                     "Interval": interval,
                     "Call Volume": call_volume,
                     "Agents Needed": agent_needed,
-                    "Prob Call Waits (%)": None if prob_wait is None else round(prob_wait*100,2),
-                    "Expected ASA": None if asa is None else round(asa,1),
-                    "Service Level (%)": None if service_level is None else round(service_level,2),
-                    "SLA Target Met": None if service_level is None else ("Yes" if service_level >= target_kpi else "No")
+                    kpi_label: value,
+                    "Target Met": met
                 })
 
             output_df = pd.DataFrame(output_rows)
