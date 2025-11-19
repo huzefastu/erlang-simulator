@@ -1,7 +1,29 @@
 import streamlit as st
 import pandas as pd
 import math
+import io
 
+st.sidebar.header("Paste Call Volume Table")
+
+# Instructions for pasting
+st.sidebar.markdown("*Copy 30-min interval data from your Excel and paste here. Use tab or comma separated format. Header row should be: Interval, Sunday, Monday, ..., Saturday*")
+
+pasted_data = st.sidebar.text_area(
+    "Paste your table data below (including header row):",
+    height=300
+)
+
+if pasted_data.strip():
+    try:
+        # Try to read as CSV from the pasted text
+        df = pd.read_csv(io.StringIO(pasted_data), sep=None, engine="python")
+        st.subheader("Pasted Call Volume Table")
+        st.dataframe(df)
+    except Exception as e:
+        st.error(f"Could not parse table data. Error: {e}")
+else:
+    st.warning("Paste your interval-level call volumes (with headers) above to proceed.")
+#End Instructions for pasting
 st.title("Contact Center Erlang Simulation")
 
 st.sidebar.header("Simulation Parameters")
