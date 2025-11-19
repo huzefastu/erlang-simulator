@@ -15,7 +15,7 @@ sim_mode = st.radio(
 )
 st.write(f"**Simulation mode selected:** {sim_mode}")
 
-# 2. SIDEBAR: KPI, ASAs, Scope, Shrinkage Inputs
+# 2. SIDEBAR: KPI, ASA, Scope, Shrinkage, Shift/Agent Rules
 st.sidebar.header("KPI Setup")
 kpi_options = [
     "Service Level (SLA)",
@@ -53,14 +53,28 @@ out_office_shrinkage = st.sidebar.number_input(
     "Out-of-office Shrinkage (%) (leaves, absences, holidays…)", value=10, min_value=0, max_value=100
 )
 
+# Shift/Agent Rules Section
+st.sidebar.header("Shift & Agent Rules")
+num_shifts = st.sidebar.number_input("Number of Different Shifts", value=3, min_value=1, max_value=10)
+max_hours_per_agent = st.sidebar.number_input("Max Hours per Agent per Day", min_value=1, max_value=12, value=8)
+min_shift_gap = st.sidebar.number_input("Min Gap Between Shifts (hours)", min_value=0, max_value=24, value=10)
+working_days_per_week = st.sidebar.number_input("Agent Working Days per Week", min_value=1, max_value=7, value=5)
+min_shift_length = st.sidebar.number_input("Minimum Shift Length (hours)", min_value=1, max_value=12, value=4)
+max_shift_length = st.sidebar.number_input("Maximum Shift Length (hours)", min_value=1, max_value=12, value=8)
+
 # Show sidebar settings summary in main area
 st.markdown(
-    f"""**Sidebar KPI & Shrinkage Setup**:  
+    f"""**Sidebar KPI & Shrinkage & Shift/Agent Rules Setup**:  
 - **KPI:** {selected_kpi} (Target: {target_kpi})
 - **ASA Target (seconds):** {asa_target}
 - **KPI Target Scope:** {target_scope}
-- **In-office Shrinkage:** {in_office_shrinkage}%
-- **Out-of-office Shrinkage:** {out_office_shrinkage}%
+- **In-office Shrinkage:** {in_office_shrinkage}%  
+- **Out-of-office Shrinkage:** {out_office_shrinkage}%  
+- **Number of Different Shifts:** {num_shifts}  
+- **Max Hours/Agent/Day:** {max_hours_per_agent}  
+- **Min Gap Between Shifts:** {min_shift_gap} hours  
+- **Working Days per Week:** {working_days_per_week}  
+- **Min/Max Shift Length:** {min_shift_length}-{max_shift_length} hours  
 """
 )
 
