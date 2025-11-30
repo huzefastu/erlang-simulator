@@ -1,7 +1,6 @@
 # main.py
 #
-# First version of the wizard: only Page 1 (inputs).
-# We store values in st.session_state so later pages can use them.
+# Wizard: Pages 1–4
 # Run with: streamlit run main.py
 
 import streamlit as st
@@ -20,7 +19,7 @@ def init_wizard_state():
             "interval_minutes": 30,
             "requirement_type": "volume",  # "volume" or "hours"
             "kpi_type": "sl",              # "sl", "asa", "line_adherence"
-            "kpi_aggregation_level": "interval", # "interval", "day", or "week"
+            "kpi_aggregation_level": "interval",  # "interval", "day", or "week"
             "kpi_targets": {
                 "sla": 0.8,                # 80%
                 "service_time_sec": 20,
@@ -38,13 +37,12 @@ def init_wizard_state():
 
     if "data" not in st.session_state:
         st.session_state["data"] = {
-        "volume": None, # will be a DataFrame later
-        "aht": None, # will be a DataFrame later
+            "volume": None,  # will be a DataFrame later
+            "aht": None,     # will be a DataFrame later
         }
 
     if "agent_types" not in st.session_state:
         st.session_state["agent_types"] = []
-
 
 
 def make_empty_week_grid(interval_minutes: int) -> "pd.DataFrame":
@@ -61,10 +59,9 @@ def make_empty_week_grid(interval_minutes: int) -> "pd.DataFrame":
         hour = total_minutes // 60
         minute = total_minutes % 60
         labels.append(f"{hour:02d}:{minute:02d}")  # e.g., "08:30"
-    
+
     days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     return pd.DataFrame(0.0, index=labels, columns=days)
-
 
 
 def go_to_page(page_number: int):
@@ -120,21 +117,22 @@ def page_1():
         index=kpi_options.index(current_kpi),
     )
 
+    # KPI target level
     st.subheader("KPI Target Level")
 
     agg_level_labels = {
-    "interval": "Interval Level (each time slot)",
-    "day": "Day Level (average per day)",
-    "week": "Week Level (overall week)",
+        "interval": "Interval Level (each time slot)",
+        "day": "Day Level (average per day)",
+        "week": "Week Level (overall week)",
     }
-    
+
     current_level = config.get("kpi_aggregation_level", "interval")
-    
+
     kpi_aggregation_level = st.radio(
-    "At what level should the KPI target be met?",
-    options=["interval", "day", "week"],
-    format_func=lambda x: agg_level_labels[x],
-    index=["interval", "day", "week"].index(current_level),
+        "At what level should the KPI target be met?",
+        options=["interval", "day", "week"],
+        format_func=lambda x: agg_level_labels[x],
+        index=["interval", "day", "week"].index(current_level),
     )
 
     # 1c. KPI target inputs
@@ -250,7 +248,9 @@ def page_1():
     if st.button("Next ➜"):
         go_to_page(2)
 
+
 # --- Page 2: Volume Forecast --- #
+
 def page_2():
     st.title("Erlang Simulator Wizard")
     st.header("Page 2: Volume Forecast Inputs")
@@ -269,16 +269,16 @@ def page_2():
     st.write("You can start simple: maybe fill just one day to test.")
 
     edited_df = st.data_editor(
-    volume_df,
-    num_rows="dynamic",
-    use_container_width=True,
-    key="volume_editor",
+        volume_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="volume_editor",
     )
 
     # Save back
     data["volume"] = edited_df
     st.session_state["data"] = data
-    
+
     st.markdown("---")
     col1, col2 = st.columns(2)
     with col1:
@@ -298,43 +298,45 @@ def page_3():
     data = st.session_state["data"]
 
     interval_minutes = config["interval_minutes"]
-    
+
     # If we don't have an AHT grid yet, create an empty one (e.g., 180 seconds default)
     if data["aht"] is None:
         df = make_empty_week_grid(interval_minutes)
         df[:] = 180  # default AHT 180 sec
         data["aht"] = df
-    
+
     aht_df = data["aht"]
-    
+
     st.write("Enter AHT (in seconds) per interval for each day.")
     st.write("You can keep it constant (e.g., 180) at first.")
-    
+
     edited_df = st.data_editor(
         aht_df,
         num_rows="dynamic",
         use_container_width=True,
         key="aht_editor",
     )
-    
+
     # Save back
     data["aht"] = edited_df
     st.session_state["data"] = data
-    
+
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("⬅ Back to Page 2"):
             go_to_page(2)
     with col3:
-        if st.button("Next ➜ (later pages)"):
-            go_to_page(4)  # we will define Page 4 next time
+        if st.button("Next ➜ Page 4"):
+            go_to_page(4)
+
 
 # --- Page 4: Agent Shift Inputs and Constraints --- #
 
 def page_4():
     st.title("Erlang Simulator Wizard")
     st.header("Page 4: Agent Shift Inputs and Constraints")
+
     agent_types = st.session_state.get("agent_types", [])
 
     st.write("Define one or more agent types and their shift rules.")
@@ -348,7 +350,7 @@ def page_4():
 
         col1, col2 = st.columns(2)
         with col1:
-                num_agents = st.number_input(
+            num_agents = st.number_input(
                 "Number of Agents",
                 min_value=0,
                 max_value=10000,
@@ -377,7 +379,7 @@ def page_4():
                 value=12.0,
                 step=1.0,
             )
-    
+
         st.markdown("**Break Lengths (minutes)**")
         bcol1, bcol2, bcol3 = st.columns(3)
         with bcol1:
@@ -386,12 +388,12 @@ def page_4():
             break2 = st.number_input("Lunch", min_value=0, max_value=120, value=30, step=5)
         with bcol3:
             break3 = st.number_input("Break 2", min_value=0, max_value=120, value=15, step=5)
-    
+
         consecutive_weekoffs = st.checkbox(
             "Consecutive Week-Offs Required?",
             value=True,
         )
-    
+
         max_working_days_between_weekoffs = st.number_input(
             "Max Working Days Between Week-offs",
             min_value=1,
@@ -399,9 +401,9 @@ def page_4():
             value=6,
             step=1,
         )
-    
+
         submit = st.form_submit_button("➕ Add Agent Type")
-    
+
     if submit:
         # Build the new agent type dict
         new_type = {
@@ -417,9 +419,9 @@ def page_4():
         agent_types.append(new_type)
         st.session_state["agent_types"] = agent_types
         st.success(f"Agent type '{new_type['name']}' added.")
-    
+
     st.markdown("### Current Agent Types")
-    
+
     if agent_types:
         for idx, atype in enumerate(agent_types):
             st.write(
@@ -430,7 +432,7 @@ def page_4():
             )
     else:
         st.info("No agent types added yet. Use the form above to add one.")
-    
+
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -439,7 +441,6 @@ def page_4():
     with col3:
         if st.button("Next ➜ Page 5 (Required Hours)"):
             go_to_page(5)
-
 
 
 # --- Main entry point --- #
