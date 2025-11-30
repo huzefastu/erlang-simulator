@@ -45,22 +45,22 @@ def init_wizard_state():
 
 
 def make_empty_week_grid(interval_minutes: int) -> "pd.DataFrame":
-"""
-Create an empty week grid with:
-- Rows: time labels like '00:00', '00:15', ...
-- Columns: days Sun–Sat
-"""
-intervals_per_day = int(24 * 60 / interval_minutes)
-# Build time labels
-labels = []
-for i in range(intervals_per_day):
-    total_minutes = i * interval_minutes
-    hour = total_minutes // 60
-    minute = total_minutes % 60
-    labels.append(f"{hour:02d}:{minute:02d}")  # e.g., "08:30"
-
-days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-return pd.DataFrame(0.0, index=labels, columns=days)
+    """
+    Create an empty week grid with:
+    - Rows: time labels like '00:00', '00:15', ...
+    - Columns: days Sun–Sat
+    """
+    intervals_per_day = int(24 * 60 / interval_minutes)
+    # Build time labels
+    labels = []
+    for i in range(intervals_per_day):
+        total_minutes = i * interval_minutes
+        hour = total_minutes // 60
+        minute = total_minutes % 60
+        labels.append(f"{hour:02d}:{minute:02d}")  # e.g., "08:30"
+    
+    days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    return pd.DataFrame(0.0, index=labels, columns=days)
 
 
 
