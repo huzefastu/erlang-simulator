@@ -337,108 +337,108 @@ def page_4():
     st.header("Page 4: Agent Shift Inputs and Constraints")
     agent_types = st.session_state.get("agent_types", [])
 
-st.write("Define one or more agent types and their shift rules.")
-st.write("We will use these later to build rosters and breaks.")
+    st.write("Define one or more agent types and their shift rules.")
+    st.write("We will use these later to build rosters and breaks.")
 
-# Simple approach: show a form for one agent type at a time.
-with st.form("add_agent_type_form"):
-    st.subheader("Add / Edit Agent Type")
+    # Simple approach: show a form for one agent type at a time.
+    with st.form("add_agent_type_form"):
+        st.subheader("Add / Edit Agent Type")
 
-    name = st.text_input("Agent Type Name", value="Default Type")
+        name = st.text_input("Agent Type Name", value="Default Type")
 
-    col1, col2 = st.columns(2)
+        col1, col2 = st.columns(2)
+        with col1:
+                num_agents = st.number_input(
+                "Number of Agents",
+                min_value=0,
+                max_value=10000,
+                value=10,
+                step=1,
+            )
+            shift_length_hours = st.number_input(
+                "Shift Length (hours)",
+                min_value=1.0,
+                max_value=24.0,
+                value=8.0,
+                step=0.5,
+            )
+        with col2:
+            weekoffs_per_agent = st.number_input(
+                "Number of Week-offs per Week",
+                min_value=0,
+                max_value=7,
+                value=2,
+                step=1,
+            )
+            min_rest_hours = st.number_input(
+                "Minimum Rest Time Between Shifts (hours)",
+                min_value=0.0,
+                max_value=48.0,
+                value=12.0,
+                step=1.0,
+            )
+    
+        st.markdown("**Break Lengths (minutes)**")
+        bcol1, bcol2, bcol3 = st.columns(3)
+        with bcol1:
+            break1 = st.number_input("Break 1", min_value=0, max_value=120, value=15, step=5)
+        with bcol2:
+            break2 = st.number_input("Lunch", min_value=0, max_value=120, value=30, step=5)
+        with bcol3:
+            break3 = st.number_input("Break 2", min_value=0, max_value=120, value=15, step=5)
+    
+        consecutive_weekoffs = st.checkbox(
+            "Consecutive Week-Offs Required?",
+            value=True,
+        )
+    
+        max_working_days_between_weekoffs = st.number_input(
+            "Max Working Days Between Week-offs",
+            min_value=1,
+            max_value=14,
+            value=6,
+            step=1,
+        )
+    
+        submit = st.form_submit_button("➕ Add Agent Type")
+    
+    if submit:
+        # Build the new agent type dict
+        new_type = {
+            "name": name.strip() or "Agent Type",
+            "num_agents": int(num_agents),
+            "shift_length_hours": float(shift_length_hours),
+            "breaks_min": [int(break1), int(break2), int(break3)],
+            "weekoffs_per_agent": int(weekoffs_per_agent),
+            "consecutive_weekoffs": bool(consecutive_weekoffs),
+            "max_days_between_weekoffs": int(max_working_days_between_weekoffs),
+            "min_rest_hours": float(min_rest_hours),
+        }
+        agent_types.append(new_type)
+        st.session_state["agent_types"] = agent_types
+        st.success(f"Agent type '{new_type['name']}' added.")
+    
+    st.markdown("### Current Agent Types")
+    
+    if agent_types:
+        for idx, atype in enumerate(agent_types):
+            st.write(
+                f"{idx + 1}. {atype['name']} - "
+                f"{atype['num_agents']} agents, "
+                f"{atype['shift_length_hours']}h shift, "
+                f"Week-offs: {atype['weekoffs_per_agent']}"
+            )
+    else:
+        st.info("No agent types added yet. Use the form above to add one.")
+    
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
     with col1:
-        num_agents = st.number_input(
-            "Number of Agents",
-            min_value=0,
-            max_value=10000,
-            value=10,
-            step=1,
-        )
-        shift_length_hours = st.number_input(
-            "Shift Length (hours)",
-            min_value=1.0,
-            max_value=24.0,
-            value=8.0,
-            step=0.5,
-        )
-    with col2:
-        weekoffs_per_agent = st.number_input(
-            "Number of Week-offs per Week",
-            min_value=0,
-            max_value=7,
-            value=2,
-            step=1,
-        )
-        min_rest_hours = st.number_input(
-            "Minimum Rest Time Between Shifts (hours)",
-            min_value=0.0,
-            max_value=48.0,
-            value=12.0,
-            step=1.0,
-        )
-
-    st.markdown("**Break Lengths (minutes)**")
-    bcol1, bcol2, bcol3 = st.columns(3)
-    with bcol1:
-        break1 = st.number_input("Break 1", min_value=0, max_value=120, value=15, step=5)
-    with bcol2:
-        break2 = st.number_input("Lunch", min_value=0, max_value=120, value=30, step=5)
-    with bcol3:
-        break3 = st.number_input("Break 2", min_value=0, max_value=120, value=15, step=5)
-
-    consecutive_weekoffs = st.checkbox(
-        "Consecutive Week-Offs Required?",
-        value=True,
-    )
-
-    max_working_days_between_weekoffs = st.number_input(
-        "Max Working Days Between Week-offs",
-        min_value=1,
-        max_value=14,
-        value=6,
-        step=1,
-    )
-
-    submit = st.form_submit_button("➕ Add Agent Type")
-
-if submit:
-    # Build the new agent type dict
-    new_type = {
-        "name": name.strip() or "Agent Type",
-        "num_agents": int(num_agents),
-        "shift_length_hours": float(shift_length_hours),
-        "breaks_min": [int(break1), int(break2), int(break3)],
-        "weekoffs_per_agent": int(weekoffs_per_agent),
-        "consecutive_weekoffs": bool(consecutive_weekoffs),
-        "max_days_between_weekoffs": int(max_working_days_between_weekoffs),
-        "min_rest_hours": float(min_rest_hours),
-    }
-    agent_types.append(new_type)
-    st.session_state["agent_types"] = agent_types
-    st.success(f"Agent type '{new_type['name']}' added.")
-
-st.markdown("### Current Agent Types")
-
-if agent_types:
-    for idx, atype in enumerate(agent_types):
-        st.write(
-            f"{idx + 1}. {atype['name']} - "
-            f"{atype['num_agents']} agents, "
-            f"{atype['shift_length_hours']}h shift, "
-            f"Week-offs: {atype['weekoffs_per_agent']}"
-        )
-else:
-    st.info("No agent types added yet. Use the form above to add one.")
-
-st.markdown("---")
-col1, col2, col3 = st.columns(3)
-with col1:
-    if st.button("⬅ Back to Page 3"):
-        go_to_page(3)
-with col3:
-    if st.button("Next ➜ Page 5 (Required Hours)"):
-        go_to_page(5)
+        if st.button("⬅ Back to Page 3"):
+            go_to_page(3)
+    with col3:
+        if st.button("Next ➜ Page 5 (Required Hours)"):
+            go_to_page(5)
 
 
 
