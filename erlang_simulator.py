@@ -1,238 +1,238 @@
+# main.py
+#
+# First version of the wizard: only Page 1 (inputs).
+# We store values in st.session_state so later pages can use them.
+# Run with: streamlit run main.py
+
 import streamlit as st
-import pandas as pd
-import math
-import io
 
-st.title("Contact Center Erlang Simulation")
 
-sim_mode = st.radio(
-    "Choose simulation mode:",
-    ["Volume-based Requirement (Erlang)", "Hours-based Requirement (coverage)"]
-)
-st.write(f"**Simulation mode selected:** {sim_mode}")
+# --- helpers to manage wizard page number --- #
 
-# SIDEBAR CONTROLS
-st.sidebar.header("KPI Setup")
-kpi_options = ["Service Level (SLA)", "Abandon Rate", "Line Adherence", "Average Speed of Answer (ASA)"]
-selected_kpi = st.sidebar.selectbox("KPI for Simulation", kpi_options)
-target_kpi = st.sidebar.number_input(
-    f"SLA Target (%)", value=80, min_value=1, max_value=100
-)
-aht = st.sidebar.number_input("Average Handling Time (AHT, seconds)", min_value=1, max_value=3600, value=150, step=1)
-asa_target = st.sidebar.number_input("SLA Window (seconds)", value=20, min_value=1, max_value=600)
-patience = st.sidebar.number_input("Caller Patience (s)", min_value=1, max_value=600, value=30, step=1)
-# Shrinkage
-st.sidebar.header("Shrinkage Setup")
-in_office_shrinkage = st.sidebar.number_input("In-office Shrinkage (%)", value=20, min_value=0, max_value=100)
-out_office_shrinkage = st.sidebar.number_input("Out-of-office Shrinkage (%)", value=10, min_value=0, max_value=100)
-# Shift/Roster
-st.sidebar.header("Shift & Agent Rules")
-num_shifts = st.sidebar.number_input("Number of Shifts", value=3, min_value=1, max_value=10)
-working_days_per_week = st.sidebar.number_input("Agent Working Days/Week", min_value=1, max_value=7, value=5)
-min_shift_length = st.sidebar.number_input("Min Shift Length (hr)", min_value=1, max_value=12, value=4)
-max_shift_length = st.sidebar.number_input("Max Shift Length (hr)", min_value=1, max_value=12, value=8)
-total_agents = st.sidebar.number_input("Total FTE For Day", value=30, min_value=1, max_value=1000)
+def init_wizard_state():
+    if "wizard_page" not in st.session_state:
+        st.session_state["wizard_page"] = 1
 
-operating_hours = 24
-interval_length_min = 30
-weekdays_order = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-days_in_week = 7
+    # Global config defaults
+    if "config" not in st.session_state:
+        st.session_state["config"] = {
+            "interval_minutes": 30,
+            "requirement_type": "volume",  # "volume" or "hours"
+            "kpi_type": "sl",              # "sl", "asa", "line_adherence"
+            "kpi_aggregation_level": "interval", # "interval", "day", or "week"
+            "kpi_targets": {
+                "sla": 0.8,                # 80%
+                "service_time_sec": 20,
+                "abandon_pct": 0.02,       # 2%
+                "abandon_time_sec": 30,
+                "asa_sec": 20,
+                "interval_target_pct": 0.95,  # for line adherence (later)
+                "day_target_pct": 0.95,       # for line adherence (later)
+            },
+            "shrinkage": {
+                "out_office_pct": 0.15,   # 15%
+                "in_office_pct": 0.10,    # 10%
+            },
+        }
 
-def erlang_c(traffic_intensity, agents):
-    if agents <= traffic_intensity:
-        return None
-    traffic_power = traffic_intensity ** agents
-    agents_fact = math.factorial(agents)
-    sum_terms = sum([
-        (traffic_intensity ** n) / math.factorial(n)
-        for n in range(agents)
-    ])
-    erlangC = (traffic_power / agents_fact) * (agents / (agents - traffic_intensity))
-    P_wait = erlangC / (sum_terms + erlangC)
-    return P_wait
 
-def agents_needed_erlang_c(volume, aht, sla_seconds, sla_target, max_agents=100):
-    calls_per_sec = float(volume) / 1800
-    traffic_intensity = calls_per_sec * aht
-    for agents in range(max(1, math.ceil(traffic_intensity)), max_agents+1):
-        prob_wait = erlang_c(traffic_intensity, agents)
-        if prob_wait is not None and agents > traffic_intensity:
-            sla = (1 - prob_wait * math.exp(-(agents - traffic_intensity) * (sla_seconds / aht))) * 100
-            if sla >= sla_target:
-                return agents
-    return max_agents
+def go_to_page(page_number: int):
+    st.session_state["wizard_page"] = page_number
 
-def erlang_a(arrival_rate, service_rate, agents, patience):
-    a = arrival_rate / service_rate
-    rho = a / agents
-    exp_neg_p = math.exp(-patience * (agents * service_rate - arrival_rate) / agents)
-    if rho >= 1 or agents == 0:
-        return 100.0
-    num = (a ** agents / math.factorial(agents)) * (1 - exp_neg_p)
-    denom = sum([(a ** n) / math.factorial(n) for n in range(agents)]) + num
-    p_abandon = num / denom if denom > 0 else 1.0
-    return p_abandon * 100
 
-if sim_mode == "Volume-based Requirement (Erlang)":
-    st.header("Paste Call Volume Table")
-    st.markdown("*Paste intervals with volumes, no header. Columns must be: Interval, Sunday, Monday, ..., Saturday*")
-    pasted_data = st.text_area("Paste volume table below (no header!):", height=400)
-    column_headers = ["Interval"] + weekdays_order
+# --- Page 1: KPI and assumption inputs --- #
 
-    if pasted_data.strip():
-        try:
-            # Read data, assign headers
-            df = pd.read_csv(io.StringIO(pasted_data), sep=None, engine="python", header=None)
-            if df.shape[1] != len(column_headers):
-                st.error(f"Expected {len(column_headers)} columns (Interval + 7 days). Found {df.shape[1]}.")
-                st.stop()
-            df.columns = column_headers
-            intervals = df["Interval"].tolist()
-            all_days = weekdays_order
+def page_1():
+    st.title("Erlang Simulator Wizard")
+    st.header("Page 1: KPI and Assumption Inputs")
 
-            # Week-off assignment
-            week_offs_per_agent = days_in_week - working_days_per_week
-            agent_week_off_distribution = [[] for _ in range(days_in_week)]
-            agent_indices = list(range(total_agents))
-            for idx, agent in enumerate(agent_indices):
-                for w in range(week_offs_per_agent):
-                    week_off_day = (idx + w) % days_in_week
-                    agent_week_off_distribution[week_off_day].append(agent)
+    config = st.session_state["config"]
 
-            # Shift allocation
-            agent_roster = []
-            agent_id = 1
-            num_intervals = len(intervals)
-            shift_length = max(min_shift_length, min(max_shift_length, int(operating_hours / num_shifts)))
-            intervals_per_shift = int((shift_length * 60) // interval_length_min)
-            shift_starts = [int(i * num_intervals // num_shifts) for i in range(num_shifts)]
-            agents_per_shift = [int(total_agents // num_shifts)] * num_shifts
-            for i in range(total_agents % num_shifts):
-                agents_per_shift[i] += 1
+    # 1a. Interval size
+    st.subheader("Interval Size")
+    interval_size = st.radio(
+        "Choose interval length:",
+        options=[15, 30, 60],
+        index=[15, 30, 60].index(config["interval_minutes"]),
+        horizontal=True,
+    )
 
-            # AGENT ROSTER GRID
-            for shift_idx, (start, count) in enumerate(zip(shift_starts, agents_per_shift)):
-                s_start = intervals[start % num_intervals]
-                s_end = intervals[(start + intervals_per_shift - 1) % num_intervals]
-                for a in range(count):
-                    idx = agent_id - 1
-                    week_off_indices = [dow for dow, lst in enumerate(agent_week_off_distribution) if idx in lst]
-                    week_off_labels = [weekdays_order[dow] for dow in week_off_indices][:2]
-                    while len(week_off_labels) < 2:
-                        week_off_labels.append("-")
-                    agent_roster.append([agent_id, s_start, s_end, week_off_labels[0], week_off_labels[1]])
-                    agent_id += 1
-            st.subheader("Agent Roster")
-            st.dataframe(pd.DataFrame(agent_roster, columns=["Agent ID", "Shift Start", "Shift End", "Week Off 1", "Week Off 2"]))
+    # 1b. Requirement type
+    st.subheader("Requirement Type")
+    requirement_type = st.radio(
+        "How do you want to give requirements?",
+        options=["volume", "hours"],
+        format_func=lambda x: "Volume-based (Erlang) " if x == "volume" else "Hours-based (manual)",
+        index=0 if config["requirement_type"] == "volume" else 1,
+    )
 
-            # Coverage for all days/intervals
-            coverage_matrix = [[0 for _ in range(days_in_week)] for _ in range(num_intervals)]
-            pointer = 0
-            for shift_idx, shift_start in enumerate(shift_starts):
-                for a in range(agents_per_shift[shift_idx]):
-                    agent_num = pointer
-                    for day_idx in range(days_in_week):
-                        if agent_num not in agent_week_off_distribution[day_idx]:
-                            covered_idxs = [(shift_start + k) % num_intervals for k in range(intervals_per_shift)]
-                            for idx in covered_idxs:
-                                coverage_matrix[idx][day_idx] += 1
-                    pointer += 1
+    # 1c. KPI type
+    st.subheader("KPI Type")
+    # Note: line_adherence only allowed if requirement_type == "hours"
+    kpi_options = ["sl", "asa"]
+    kpi_labels = {
+        "sl": "Service Level",
+        "asa": "Average Speed of Answer (ASA)",
+        "line_adherence": "Line Adherence (hours mode only)",
+    }
+    if requirement_type == "hours":
+        kpi_options.append("line_adherence")
 
-            # MAIN GRIDS
-            results_needed, results_sched, results_open = [], [], []
-            for idx, interval in enumerate(intervals):
-                row_needed = [interval]
-                row_sched = [interval]
-                row_open = [interval]
-                for day_idx, day in enumerate(weekdays_order):
-                    call_volume = df.loc[idx, day]
-                    agents_scheduled = coverage_matrix[idx][day_idx]
-                    agents_needed = agents_needed_erlang_c(call_volume, aht, asa_target, target_kpi)
-                    agents_open = round(agents_scheduled * (1 - in_office_shrinkage / 100), 2)
-                    row_needed.append(agents_needed)
-                    row_sched.append(agents_scheduled)
-                    row_open.append(agents_open)
-                results_needed.append(row_needed)
-                results_sched.append(row_sched)
-                results_open.append(row_open)
+    current_kpi = config["kpi_type"]
+    if current_kpi not in kpi_options:
+        current_kpi = "sl"
 
-            # Day averages for bottom row
-            row_avg_needed = ["Day Average"]
-            row_avg_sched = ["Day Average"]
-            row_avg_open = ["Day Average"]
-            for day_idx in range(len(weekdays_order)):
-                needed_vals = [results_needed[i][day_idx + 1] for i in range(len(results_needed))]
-                sched_vals = [results_sched[i][day_idx + 1] for i in range(len(results_sched))]
-                open_vals = [results_open[i][day_idx + 1] for i in range(len(results_open))]
-                row_avg_needed.append(round(sum(needed_vals) / len(needed_vals), 2))
-                row_avg_sched.append(round(sum(sched_vals) / len(sched_vals), 2))
-                row_avg_open.append(round(sum(open_vals) / len(open_vals), 2))
-            results_needed.append(row_avg_needed)
-            results_sched.append(row_avg_sched)
-            results_open.append(row_avg_open)
+    kpi_type = st.radio(
+        "Which KPI do you want to design for?",
+        options=kpi_options,
+        format_func=lambda x: kpi_labels[x],
+        index=kpi_options.index(current_kpi),
+    )
 
-            st.subheader("Grid 1: Agents Needed (Erlang C - SLA Target)")
-            st.dataframe(pd.DataFrame(results_needed, columns=["Interval"] + weekdays_order))
-            st.subheader("Grid 2: Agents Scheduled (Roster/Shift)")
-            st.dataframe(pd.DataFrame(results_sched, columns=["Interval"] + weekdays_order))
-            st.subheader("Grid 3: Agents Open (After In-Office Shrinkage)")
-            st.dataframe(pd.DataFrame(results_open, columns=["Interval"] + weekdays_order))
+    st.subheader("KPI Target Level")
 
-            # KPI & Overs/Unders grids
-            results_kpi, results_over = [], []
-            for idx, interval in enumerate(intervals):
-                row_kpi = [interval]
-                row_over = [interval]
-                for day_idx, day in enumerate(weekdays_order):
-                    call_volume = df.loc[idx, day]
-                    agents_scheduled = coverage_matrix[idx][day_idx]
-                    agents_needed = results_needed[idx][day_idx + 1]
-                    over_under = agents_scheduled - agents_needed
+    agg_level_labels = {
+    "interval": "Interval Level (each time slot)",
+    "day": "Day Level (average per day)",
+    "week": "Week Level (overall week)",
+    }
+    
+    current_level = config.get("kpi_aggregation_level", "interval")
+    
+    kpi_aggregation_level = st.radio(
+    "At what level should the KPI target be met?",
+    options=["interval", "day", "week"],
+    format_func=lambda x: agg_level_labels[x],
+    index=["interval", "day", "week"].index(current_level),
+    )
 
-                    calls_per_sec = float(call_volume) / 1800
-                    traffic_intensity = calls_per_sec * aht
+    # 1c. KPI target inputs
+    st.subheader("KPI Targets (Global for Week)")
 
-                    prob_wait = erlang_c(traffic_intensity, agents_scheduled)
-                    service_level = asa = abandon_rate = line_adherence = None
-                    if prob_wait is not None and agents_scheduled > traffic_intensity:
-                        asa = (prob_wait * aht) / (agents_scheduled - traffic_intensity)
-                        service_level = (1 - prob_wait * math.exp(-(agents_scheduled - traffic_intensity) * (asa_target / aht))) * 100
-                    if selected_kpi == "Abandon Rate":
-                        abandon_rate = erlang_a(calls_per_sec, 1/aht, agents_scheduled, patience)
-                    if selected_kpi == "Line Adherence":
-                        line_adherence = round(100 * agents_scheduled / agents_needed, 2) if agents_needed > 0 else 100
+    kpi_targets = config["kpi_targets"]
 
-                    if selected_kpi == "Service Level (SLA)":
-                        value = None if service_level is None else round(service_level, 2)
-                    elif selected_kpi == "Average Speed of Answer (ASA)":
-                        value = None if asa is None else round(asa, 2)
-                    elif selected_kpi == "Abandon Rate":
-                        value = None if abandon_rate is None else round(abandon_rate, 2)
-                    elif selected_kpi == "Line Adherence":
-                        value = None if line_adherence is None else round(line_adherence, 2)
-                    else:
-                        value = None
+    if kpi_type == "sl":
+        col1, col2 = st.columns(2)
+        with col1:
+            sla_pct = st.number_input(
+                "Service Level Target (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=kpi_targets["sla"] * 100,
+                step=1.0,
+            )
+            service_time_sec = st.number_input(
+                "Service Time Target (seconds)",
+                min_value=1,
+                max_value=600,
+                value=kpi_targets["service_time_sec"],
+                step=1,
+            )
+        with col2:
+            abandon_pct = st.number_input(
+                "Abandon Target (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=kpi_targets["abandon_pct"] * 100,
+                step=0.5,
+            )
+            abandon_time_sec = st.number_input(
+                "Abandon Time (seconds)",
+                min_value=1,
+                max_value=600,
+                value=kpi_targets["abandon_time_sec"],
+                step=1,
+            )
 
-                    row_kpi.append(value)
-                    row_over.append(over_under)
-                results_kpi.append(row_kpi)
-                results_over.append(row_over)
+        # Convert % inputs into 0–1
+        kpi_targets["sla"] = sla_pct / 100.0
+        kpi_targets["service_time_sec"] = int(service_time_sec)
+        kpi_targets["abandon_pct"] = abandon_pct / 100.0
+        kpi_targets["abandon_time_sec"] = int(abandon_time_sec)
 
-            # Day averages for these grids
-            row_avg_kpi = ["Day Average"]
-            row_avg_over = ["Day Average"]
-            for day_idx in range(len(weekdays_order)):
-                vals_kpi = [results_kpi[i][day_idx + 1] for i in range(len(results_kpi))]
-                vals_over = [results_over[i][day_idx + 1] for i in range(len(results_over))]
-                valid_kpi = [v for v in vals_kpi if v is not None]
-                row_avg_kpi.append(round(sum(valid_kpi)/len(valid_kpi),2) if valid_kpi else None)
-                row_avg_over.append(round(sum(vals_over)/len(vals_over),2))
-            results_kpi.append(row_avg_kpi)
-            results_over.append(row_avg_over)
+    elif kpi_type == "asa":
+        asa_sec = st.number_input(
+            "ASA Target (seconds)",
+            min_value=1,
+            max_value=600,
+            value=kpi_targets["asa_sec"],
+            step=1,
+        )
+        kpi_targets["asa_sec"] = int(asa_sec)
 
-            st.subheader("Grid 4: Selected KPI Per Interval & Day")
-            st.dataframe(pd.DataFrame(results_kpi, columns=["Interval"] + weekdays_order))
-            st.subheader("Grid 5: Overs/Unders (Scheduled - Needed)")
-            st.dataframe(pd.DataFrame(results_over, columns=["Interval"] + weekdays_order))
-        except Exception as e:
-            st.error(f"Could not parse table data. Error: {e}")
+    elif kpi_type == "line_adherence":
+        col1, col2 = st.columns(2)
+        with col1:
+            interval_target_pct = st.number_input(
+                "Interval Adherence Target (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=kpi_targets["interval_target_pct"] * 100,
+                step=1.0,
+            )
+        with col2:
+            day_target_pct = st.number_input(
+                "Day Adherence Target (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=kpi_targets["day_target_pct"] * 100,
+                step=1.0,
+            )
+        kpi_targets["interval_target_pct"] = interval_target_pct / 100.0
+        kpi_targets["day_target_pct"] = day_target_pct / 100.0
+
+    # 1d + 1e. Shrinkage
+    st.subheader("Shrinkage Targets")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        out_office_pct = st.number_input(
+            "Out-of-Office Shrinkage (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=st.session_state["config"]["shrinkage"]["out_office_pct"] * 100,
+            step=1.0,
+        )
+    with col2:
+        in_office_pct = st.number_input(
+            "In-Office Shrinkage (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=st.session_state["config"]["shrinkage"]["in_office_pct"] * 100,
+            step=1.0,
+        )
+
+    st.write("These are global shrinkage targets for the whole week.")
+
+    # Save back to session_state
+    config["interval_minutes"] = int(interval_size)
+    config["requirement_type"] = requirement_type
+    config["kpi_type"] = kpi_type
+    config["kpi_aggregation_level"] = kpi_aggregation_level
+    config["kpi_targets"] = kpi_targets
+    config["shrinkage"]["out_office_pct"] = out_office_pct / 100.0
+    config["shrinkage"]["in_office_pct"] = in_office_pct / 100.0
+    st.session_state["config"] = config
+
+    # Navigation
+    st.markdown("---")
+    if st.button("Next ➜"):
+        go_to_page(2)
+
+
+# --- Main entry point --- #
+
+def main():
+    init_wizard_state()
+    page = st.session_state["wizard_page"]
+
+    if page == 1:
+        page_1()
+    else:
+        st.write("Other pages will come later. For now, go back to Page 1.")
+        if st.button("⬅ Back to Page 1"):
+            go_to_page(1)
+
+
+if __name__ == "__main__":
+    main()
