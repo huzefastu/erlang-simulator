@@ -94,3 +94,125 @@ def sla_for_interval(
 
     sla = max(0.0, min(1.0, sla))
     return sla
+
+
+def agents_for_sla(
+    target_sla: float,
+    calls_per_hour: float,
+    aht_seconds: float,
+    target_answer_time_seconds: float,
+    max_agents: int = 1000,
+) -> int:
+    """
+    Find the smallest number of agents that reaches at least target_sla
+    for one interval.
+
+    This is a simple search, similar in spirit to the VBA AgentsSLA function. [attached_file:1]
+
+    Inputs:
+      - target_sla: e.g. 0.8 for 80%
+      - calls_per_hour: forecast calls in this interval (scaled to per hour)
+      - aht_seconds: average handle time in seconds
+      - target_answer_time_seconds: e.g. 20 seconds
+      - max_agents: safety cap so we don't loop forever
+
+    Output:
+      - integer number of agents
+    """
+
+    # Protect against silly inputs
+    if target_sla <= 0:
+        # If target is 0 or less, 0 agents is already enough
+        return 0
+    if calls_per_hour <= 0 or aht_seconds <= 0:
+        # No calls or no AHT: no agents needed
+        return 0
+
+    # Make sure target_sla is not > 1
+    if target_sla > 1:
+        target_sla = target_sla / 100.0  # allow 80 as 80%
+
+    # Start with a basic guess:
+    # intensity (erlangs) rounded up, plus 1, just like many Erlang examples. [web:26]
+    intensity = traffic_intensity(calls_per_hour, aht_seconds)
+    if intensity <= 0:
+        return 0
+
+    agents = max(1, math.ceil(intensity + 1))
+
+    # Safety: don't start above max_agents
+    agents = min(agents, max_agents)
+
+    # Now keep adding agents until SLA is good enough or we hit max_agents
+    while agents <= max_agents:
+        sla = sla_for_interval(
+            agents=agents,
+            calls_per_hour=calls_per_hour,
+            aht_seconds=aht_seconds,
+            target_answer_time_seconds=target_answer_time_seconds,
+        )
+
+        # If SLA meets or beats the target, we stop and return this agent count
+        if sla >= target_sla:
+            return agents
+
+        agents += 1
+
+    # If we get here, something is off (too few agents allowed)
+    # Return max_agents as a "best we could do".
+    return max_agents
+
+
+import pandas as pd
+
+def required_agents_and_hours_sla(
+volume_df: "pd.DataFrame",
+aht_df: "pd.DataFrame",
+target_sla: float,
+target_answer_time_seconds: float,
+interval_minutes: int,
+) -> tuple["pd.DataFrame", "pd.DataFrame"]:
+"""
+For a whole week grid:
+- volume_df: calls per interval (rows = intervals, cols = days)
+- aht_df: AHT in seconds, same shape as volume_df
+Calculate:
+- required_agents_df: agents needed per cell
+- required_hours_df: required_hours = agents * (interval_minutes / 60)
+  This uses agents_for_sla() for each cell.[2][1]
+  """
+
+  # Copy shape and index/columns from volume_df
+  required_agents = pd.DataFrame(
+      0,
+      index=volume_df.index,
+      columns=volume_df.columns,
+  )
+  required_hours = pd.DataFrame(
+      0.0,
+      index=volume_df.index,
+      columns=volume_df.columns,
+  )
+
+  interval_hours = interval_minutes / 60.0
+
+  for i in volume_df.index:
+      for day in volume_df.columns:
+          calls = float(volume_df.at[i, day] or 0)
+          aht = float(aht_df.at[i, day] or 0)
+
+          if calls <= 0 or aht <= 0:
+              # No calls or no AHT: no agents, no hours
+              agents = 0
+          else:
+              agents = agents_for_sla(
+                  target_sla=target_sla,
+                  calls_per_hour=calls * (60.0 / interval_minutes),
+                  aht_seconds=aht,
+                  target_answer_time_seconds=target_answer_time_seconds,
+              )
+
+          required_agents.at[i, day] = agents
+          required_hours.at[i, day] = agents * interval_hours
+
+  return required_agents, required_hours
