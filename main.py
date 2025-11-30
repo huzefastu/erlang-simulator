@@ -442,6 +442,7 @@ def page_4():
         st.info("No agent types added yet. Use the form above to add one.")
 
 
+
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
     with col1:
