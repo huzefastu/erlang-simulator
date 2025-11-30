@@ -258,7 +258,7 @@ def page_2():
 
     # If we don't have a volume grid yet, create an empty one
     if data["volume"] is None:
-    data["volume"] = make_empty_week_grid(interval_minutes)
+        data["volume"] = make_empty_week_grid(interval_minutes)
 
     volume_df = data["volume"]
 
