@@ -425,8 +425,8 @@ def page_4():
     if agent_types:
         for idx, atype in enumerate(agent_types):
             # Two columns: details on the left, delete button on the right
-            col_info, col_delete = st.columns()[2][3]
-    
+            col_info, col_delete = st.columns([4, 1])
+
             with col_info:
                 st.write(
                     f"{idx + 1}. {atype['name']} - "
@@ -434,7 +434,7 @@ def page_4():
                     f"{atype['shift_length_hours']}h shift, "
                     f"Week-offs: {atype['weekoffs_per_agent']}"
                 )
-    
+
             with col_delete:
                 if st.button("🗑️ Delete", key=f"delete_agent_type_{idx}"):
                     # Remove this type and refresh the page
@@ -443,7 +443,7 @@ def page_4():
                     st.experimental_rerun()
     else:
         st.info("No agent types added yet. Use the form above to add one.")
-    
+
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
     with col1:
