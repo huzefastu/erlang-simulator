@@ -433,7 +433,7 @@ def page_4():
                     f"Week-offs: {atype['weekoffs_per_agent']}"
                 )
             with cols:[2]
-                if st.button("🗑️ Delete", key=f"delete_agent_type_{idx}"):
+            if st.button("🗑️ Delete", key=f"delete_agent_type_{idx}"):
                     # Remove this type
                     agent_types.pop(idx)
                     st.session_state["agent_types"] = agent_types
