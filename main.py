@@ -424,14 +424,23 @@ def page_4():
 
     if agent_types:
         for idx, atype in enumerate(agent_types):
-            st.write(
-                f"{idx + 1}. {atype['name']} - "
-                f"{atype['num_agents']} agents, "
-                f"{atype['shift_length_hours']}h shift, "
-                f"Week-offs: {atype['weekoffs_per_agent']}"
-            )
+            cols = st.columns()[1][2]
+            with cols:
+                st.write(
+                    f"{idx + 1}. {atype['name']} - "
+                    f"{atype['num_agents']} agents, "
+                    f"{atype['shift_length_hours']}h shift, "
+                    f"Week-offs: {atype['weekoffs_per_agent']}"
+                )
+            with cols:[2]
+                if st.button("🗑️ Delete", key=f"delete_agent_type_{idx}"):
+                    # Remove this type
+                    agent_types.pop(idx)
+                    st.session_state["agent_types"] = agent_types
+                    st.experimental_rerun()
     else:
         st.info("No agent types added yet. Use the form above to add one.")
+
 
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
