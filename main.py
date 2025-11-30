@@ -440,7 +440,7 @@ def page_4():
                     # Remove this type and refresh the page
                     agent_types.pop(idx)
                     st.session_state["agent_types"] = agent_types
-                    st.experimental_rerun()
+                    st.rerun()
     else:
         st.info("No agent types added yet. Use the form above to add one.")
 
