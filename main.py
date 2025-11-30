@@ -447,6 +447,7 @@ with col3:
 def main():
     init_wizard_state()
     page = st.session_state["wizard_page"]
+    page = 1
 
     if page == 1:
         page_1()
