@@ -5,6 +5,7 @@
 # Run with: streamlit run main.py
 
 import streamlit as st
+import pandas as pd
 
 
 # --- helpers to manage wizard page number --- #
@@ -34,6 +35,33 @@ def init_wizard_state():
                 "in_office_pct": 0.10,    # 10%
             },
         }
+
+    if "data" not in st.session_state:
+        st.session_state["data"] = {
+        "volume": None, # will be a DataFrame later
+        "aht": None, # will be a DataFrame later
+        }
+
+
+
+def make_empty_week_grid(interval_minutes: int) -> "pd.DataFrame":
+"""
+Create an empty week grid with:
+- Rows: time labels like '00:00', '00:15', ...
+- Columns: days Sun–Sat
+"""
+intervals_per_day = int(24 * 60 / interval_minutes)
+# Build time labels
+labels = []
+for i in range(intervals_per_day):
+    total_minutes = i * interval_minutes
+    hour = total_minutes // 60
+    minute = total_minutes % 60
+    labels.append(f"{hour:02d}:{minute:02d}")  # e.g., "08:30"
+
+days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+return pd.DataFrame(0.0, index=labels, columns=days)
+
 
 
 def go_to_page(page_number: int):
@@ -219,6 +247,86 @@ def page_1():
     if st.button("Next ➜"):
         go_to_page(2)
 
+# --- Page 2: Volume Forecast --- #
+def page_2():
+    st.title("Erlang Simulator Wizard")
+    st.header("Page 2: Volume Forecast Inputs")
+    config = st.session_state["config"]
+    data = st.session_state["data"]
+
+    interval_minutes = config["interval_minutes"]
+
+    # If we don't have a volume grid yet, create an empty one
+    if data["volume"] is None:
+    data["volume"] = make_empty_week_grid(interval_minutes)
+
+    volume_df = data["volume"]
+
+    st.write("Enter forecasted call volumes per interval for each day (Sun–Sat).")
+    st.write("You can start simple: maybe fill just one day to test.")
+
+    edited_df = st.data_editor(
+    volume_df,
+    num_rows="dynamic",
+    use_container_width=True,
+    key="volume_editor",
+    )
+
+    # Save back
+    data["volume"] = edited_df
+    st.session_state["data"] = data
+    
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("⬅ Back to Page 1"):
+            go_to_page(1)
+    with col2:
+        if st.button("Next ➜ Page 3"):
+            go_to_page(3)
+
+
+# --- Page 3: AHT Forecast --- #
+
+def page_3():
+    st.title("Erlang Simulator Wizard")
+    st.header("Page 3: AHT Forecast Inputs")
+    config = st.session_state["config"]
+    data = st.session_state["data"]
+
+    interval_minutes = config["interval_minutes"]
+    
+    # If we don't have an AHT grid yet, create an empty one (e.g., 180 seconds default)
+    if data["aht"] is None:
+        df = make_empty_week_grid(interval_minutes)
+        df[:] = 180  # default AHT 180 sec
+        data["aht"] = df
+    
+    aht_df = data["aht"]
+    
+    st.write("Enter AHT (in seconds) per interval for each day.")
+    st.write("You can keep it constant (e.g., 180) at first.")
+    
+    edited_df = st.data_editor(
+        aht_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="aht_editor",
+    )
+    
+    # Save back
+    data["aht"] = edited_df
+    st.session_state["data"] = data
+    
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("⬅ Back to Page 2"):
+            go_to_page(2)
+    with col3:
+        if st.button("Next ➜ (later pages)"):
+            go_to_page(4)  # we will define Page 4 next time
+
 
 # --- Main entry point --- #
 
@@ -228,8 +336,12 @@ def main():
 
     if page == 1:
         page_1()
+    elif page == 2:
+        page_2()
+    elif page == 3:
+        page_3()
     else:
-        st.write("Other pages will come later. For now, go back to Page 1.")
+        st.write("Later pages not built yet. Go back:")
         if st.button("⬅ Back to Page 1"):
             go_to_page(1)
 
