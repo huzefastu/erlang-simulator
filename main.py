@@ -44,6 +44,10 @@ def init_wizard_state():
     if "agent_types" not in st.session_state:
         st.session_state["agent_types"] = []
 
+    if "agent_type_edit_index" not in st.session_state:
+        st.session_state["agent_type_edit_index"] = None
+
+
 
 def make_empty_week_grid(interval_minutes: int) -> "pd.DataFrame":
     """
@@ -338,6 +342,11 @@ def page_4():
     st.header("Page 4: Agent Shift Inputs and Constraints")
 
     agent_types = st.session_state.get("agent_types", [])
+    edit_index = st.session_state.get("agent_type_edit_index", None)
+    editing_type = None
+    if edit_index is not None and 0 <= edit_index < len(agent_types):
+        editing_type = agent_types[edit_index]
+
 
     st.write("Define one or more agent types and their shift rules.")
     st.write("We will use these later to build rosters and breaks.")
@@ -346,7 +355,7 @@ def page_4():
     with st.form("add_agent_type_form"):
         st.subheader("Add / Edit Agent Type")
 
-        name = st.text_input("Agent Type Name", value="Default Type")
+        name = st.text_input("Agent Type Name", value= editing type["name"] if editing type else "Default Type")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -354,14 +363,14 @@ def page_4():
                 "Number of Agents",
                 min_value=0,
                 max_value=10000,
-                value=10,
+                value= editing type["num_agents"] if editing type else 10,
                 step=1,
             )
             shift_length_hours = st.number_input(
                 "Shift Length (hours)",
                 min_value=1.0,
                 max_value=24.0,
-                value=8.0,
+                value= editing type["shift_length_hours"] if editing type else 8.0,
                 step=0.5,
             )
         with col2:
@@ -369,78 +378,149 @@ def page_4():
                 "Number of Week-offs per Week",
                 min_value=0,
                 max_value=7,
-                value=2,
+                value= editing type["weekoffs_per_agent"] if editing type else 2,
                 step=1,
             )
             min_rest_hours = st.number_input(
                 "Minimum Rest Time Between Shifts (hours)",
                 min_value=0.0,
                 max_value=48.0,
-                value=12.0,
+                value= editing type["min_rest_hours"] if editing type else 12.0,
                 step=1.0,
             )
 
         st.markdown("**Break Lengths (minutes)**")
         bcol1, bcol2, bcol3 = st.columns(3)
         with bcol1:
-            break1 = st.number_input("Break 1", min_value=0, max_value=120, value=15, step=5)
+            break1 = st.number_input("Break 1", min_value=0, max_value=120, value= editing type["break1"] if editing type else 15, step=5)
         with bcol2:
-            break2 = st.number_input("Lunch", min_value=0, max_value=120, value=30, step=5)
+            break2 = st.number_input("Lunch", min_value=0, max_value=120, value= editing type["break2"] if editing type else 30, step=5)
         with bcol3:
-            break3 = st.number_input("Break 2", min_value=0, max_value=120, value=15, step=5)
+            break3 = st.number_input("Break 2", min_value=0, max_value=120, value= editing type["break3"] if editing type else 15, step=5)
 
         consecutive_weekoffs = st.checkbox(
             "Consecutive Week-Offs Required?",
-            value=True,
+            value= editing type["consecutive_weekoffs"] if editing type else True,
         )
 
         max_working_days_between_weekoffs = st.number_input(
             "Max Working Days Between Week-offs",
             min_value=1,
             max_value=14,
-            value=6,
+            value= editing type["max_working_days_between_weekoffs"] if editing type else 6,
             step=1,
         )
 
-        submit = st.form_submit_button("➕ Add Agent Type")
+        st.markdown("**Hours of Operation**")
 
-    if submit:
-        # Build the new agent type dict
-        new_type = {
-            "name": name.strip() or "Agent Type",
-            "num_agents": int(num_agents),
-            "shift_length_hours": float(shift_length_hours),
-            "breaks_min": [int(break1), int(break2), int(break3)],
-            "weekoffs_per_agent": int(weekoffs_per_agent),
-            "consecutive_weekoffs": bool(consecutive_weekoffs),
-            "max_days_between_weekoffs": int(max_working_days_between_weekoffs),
-            "min_rest_hours": float(min_rest_hours),
-        }
-        agent_types.append(new_type)
-        st.session_state["agent_types"] = agent_types
-        st.success(f"Agent type '{new_type['name']}' added.")
+        # Time inputs for start and end
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            start_time = st.time_input("Start Time", value= editing type["start_time"] if editing type else pd.to_datetime("09:00").time())
+        with col_t2:
+            end_time = st.time_input("End Time", value= editing type["end_time"] if editing type else pd.to_datetime("18:00").time())
+        
+        # Working days (checkboxes)
+        st.markdown("**Working Days**")
+
+        day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        working_days = []
+    
+        # If we are editing an existing type, use its working_days as default
+        existing_days = editing_type["working_days"] if editing_type else None
+    
+        day_cols = st.columns(7)
+        for i, day in enumerate(day_labels):
+            with day_cols[i]:
+                if existing_days is not None:
+                    # Edit mode: checkbox default = whatever was stored
+                    default_checked = day in existing_days
+                else:
+                    # Add mode: default Mon–Fri = True, Sat/Sun = False
+                    default_checked = day in ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    
+                checked = st.checkbox(
+                    day,
+                    value=default_checked,
+                    key=f"wd_{day}",
+                )
+    
+                if checked:
+                    working_days.append(day)
+
+            button_label = "💾 Update Agent Type" if editing_type else "➕ Add Agent Type"
+            submit = st.form_submit_button(button_label)
+
+
+        if submit:
+            new_type = {
+                "name": name.strip() or "Agent Type",
+                "num_agents": int(num_agents),
+                "shift_length_hours": float(shift_length_hours),
+                "breaks_min": [int(break1), int(break2), int(break3)],
+                "weekoffs_per_agent": int(weekoffs_per_agent),
+                "consecutive_weekoffs": bool(consecutive_weekoffs),
+                "max_days_between_weekoffs": int(max_working_days_between_weekoffs),
+                "min_rest_hours": float(min_rest_hours),
+                "start_time": start_time,
+                "end_time": end_time,
+                "working_days": working_days,
+            }
+        
+            if editing_type is not None:
+                # Update existing
+                agent_types[edit_index] = new_type
+                st.session_state["agent_types"] = agent_types
+                st.session_state["agent_type_edit_index"] = None
+                st.success(f"Agent type '{new_type['name']}' updated.")
+            else:
+                # Add new
+                agent_types.append(new_type)
+                st.session_state["agent_types"] = agent_types
+                st.success(f"Agent type '{new_type['name']}' added.")
 
     st.markdown("### Current Agent Types")
 
     if agent_types:
+        delete_index = None
+        edit_clicked_index = None
+    
         for idx, atype in enumerate(agent_types):
-            # Two columns: details on the left, delete button on the right
-            col_info, col_delete = st.columns([4, 1])
-
+            col_info, col_edit, col_delete = st.columns()[1][2]
+    
             with col_info:
+                days_str = ", ".join(atype.get("working_days", []))
                 st.write(
                     f"{idx + 1}. {atype['name']} - "
                     f"{atype['num_agents']} agents, "
                     f"{atype['shift_length_hours']}h shift, "
-                    f"Week-offs: {atype['weekoffs_per_agent']}"
+                    f"Week-offs: {atype['weekoffs_per_agent']}  \n"
+                    f"Hours: {atype.get('start_time')}–{atype.get('end_time')}  \n"
+                    f"Working Days: {days_str}"
                 )
-
+    
+            with col_edit:
+                if st.button("✏️ Edit", key=f"edit_agent_type_{idx}"):
+                    edit_clicked_index = idx
+    
             with col_delete:
                 if st.button("🗑️ Delete", key=f"delete_agent_type_{idx}"):
-                    # Remove this type and refresh the page
-                    agent_types.pop(idx)
-                    st.session_state["agent_types"] = agent_types
-                    st.rerun()
+                    delete_index = idx
+    
+        # Handle edit click
+        if edit_clicked_index is not None:
+            st.session_state["agent_type_edit_index"] = edit_clicked_index
+            st.rerun()
+    
+        # Handle delete click
+        if delete_index is not None:
+            agent_types.pop(delete_index)
+            st.session_state["agent_types"] = agent_types
+            # If we were editing this one, clear edit_index
+            if st.session_state.get("agent_type_edit_index") == delete_index:
+                st.session_state["agent_type_edit_index"] = None
+            st.rerun()
+    
     else:
         st.info("No agent types added yet. Use the form above to add one.")
 
