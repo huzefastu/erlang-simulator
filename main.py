@@ -437,7 +437,7 @@ def page_4():
                 checked = st.checkbox(
                     day,
                     value=default_checked,
-                    key=f"wd_{day}",
+                    key=f"wd_{day}_{edit_index}",
                 )
                 if checked:
                     working_days.append(day)
@@ -465,10 +465,12 @@ def page_4():
             st.session_state["agent_types"] = agent_types
             st.session_state["agent_type_edit_index"] = None
             st.success(f"Agent type '{new_type['name']}' updated.")
+            st.rerun()
         else:
             agent_types.append(new_type)
             st.session_state["agent_types"] = agent_types
             st.success(f"Agent type '{new_type['name']}' added.")
+            st.rerun()
 
     st.markdown("### Current Agent Types")
 
