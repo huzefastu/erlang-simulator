@@ -848,7 +848,9 @@ def page_9():
             go_to_page(8)
         return
 
+    # Open count = agents available after all shrinkage
     open_count = final_roster.round(2)
+    # Over/Under = open_count - required_agents
     over_under = (open_count - required_agents).round(2)
 
     data["open_count"] = open_count
@@ -856,7 +858,7 @@ def page_9():
     st.session_state["data"] = data
 
     st.write("Open Count = agents available after all shrinkage (Page 8).")
-    st.write("Over/Under = Open Count − Required Agents (positive = overstaffed, negative = understaffed).")  [web:60][web:69]
+    st.write("Over/Under = Open Count minus Required Agents (positive = overstaffed, negative = understaffed).")
 
     st.markdown("### Open Count (Available Agents)")
     st.dataframe(open_count, use_container_width=True)
@@ -872,6 +874,7 @@ def page_9():
     with col2:
         if st.button("Next ➜ (Future Pages: Optimization, KPI Simulation)"):
             go_to_page(10)
+
 
 
 # --- Main entry point --- #
