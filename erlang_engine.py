@@ -1,12 +1,15 @@
 # erlang_engine.py
 #
-# Small Erlang calculator "brain" that we will grow later.
-# For now, we just handle:
-# - basic traffic intensity (erlangs)
+# Erlang calculator "brain":
+# - traffic_intensity (erlangs)
 # - Erlang C formula
-# - a simple SLA calculation
+# - SLA for one interval
+# - ASA for one interval
+# - agents_for_sla / agents_for_asa (one interval)
+# - required_agents_and_hours_sla / _asa (full week grids)
 
 import math
+import pandas as pd
 
 
 def traffic_intensity(calls_per_hour: float, aht_seconds: float) -> float:
@@ -22,18 +25,16 @@ def traffic_intensity(calls_per_hour: float, aht_seconds: float) -> float:
 def erlang_c(agents: int, intensity: float) -> float:
     """
     Erlang C formula: probability a call waits (is queued).
-    This follows the same logic as the ErlangC function in the VBA file.
     """
     if agents <= 0 or intensity <= 0:
         return 0.0
 
-    # If offered load is equal or higher than agents, system is overloaded.
-    # Clamp utilisation just below 1 to avoid divide-by-zero explosions.
+    # utilisation
     rho = intensity / agents
     if rho >= 1.0:
         rho = 0.999999
 
-    # Compute the sum of (A^n / n!) for n = 0..agents
+    # sum_{n=0..agents} A^n / n!
     sum_terms = 0.0
     term = 1.0  # A^0 / 0! = 1
     for n in range(0, agents + 1):
@@ -41,15 +42,12 @@ def erlang_c(agents: int, intensity: float) -> float:
             term *= intensity / n
         sum_terms += term
 
-    # Last term for n = agents
-    a_power_n_over_n_fact = term  # already last value from loop
+    a_power_n_over_n_fact = term  # last term for n = agents
 
-    # Erlang C formula
     numerator = a_power_n_over_n_fact * (agents / (agents - intensity))
     denominator = sum_terms
     c = numerator / denominator
 
-    # Keep in [0,1]
     c = max(0.0, min(1.0, c))
     return c
 
@@ -61,17 +59,13 @@ def sla_for_interval(
     target_answer_time_seconds: float,
 ) -> float:
     """
-    Approximate service level for one interval:
-    = % of calls answered within target_answer_time_seconds.
-
-    Formula (same structure as VBA SLA function):
+    Service level for one interval:
     SLA = (1 - C) + C * exp(-(agents - A) * (T / AHT))
     where:
-      C = Erlang C (probability of waiting)
+      C = Erlang C
       A = intensity (erlangs)
       T = target answer time (seconds)
     """
-
     if agents <= 0 or calls_per_hour <= 0 or aht_seconds <= 0:
         return 0.0
 
@@ -81,17 +75,14 @@ def sla_for_interval(
 
     C = erlang_c(agents, A)
 
-    # utilisation rho = A / agents
     rho = A / agents
     if rho >= 1.0:
         rho = 0.999999
 
-    # This matches the "1 - C * exp(-...)" style used in the VBA SLA function. [attached_file:1]
     exponent = -(agents - A) * (target_answer_time_seconds / aht_seconds)
     part_queued_and_answered_in_time = C * math.exp(exponent)
 
     sla = (1.0 - C) + part_queued_and_answered_in_time
-
     sla = max(0.0, min(1.0, sla))
     return sla
 
@@ -106,44 +97,22 @@ def agents_for_sla(
     """
     Find the smallest number of agents that reaches at least target_sla
     for one interval.
-
-    This is a simple search, similar in spirit to the VBA AgentsSLA function. [attached_file:1]
-
-    Inputs:
-      - target_sla: e.g. 0.8 for 80%
-      - calls_per_hour: forecast calls in this interval (scaled to per hour)
-      - aht_seconds: average handle time in seconds
-      - target_answer_time_seconds: e.g. 20 seconds
-      - max_agents: safety cap so we don't loop forever
-
-    Output:
-      - integer number of agents
     """
-
-    # Protect against silly inputs
     if target_sla <= 0:
-        # If target is 0 or less, 0 agents is already enough
         return 0
     if calls_per_hour <= 0 or aht_seconds <= 0:
-        # No calls or no AHT: no agents needed
         return 0
 
-    # Make sure target_sla is not > 1
     if target_sla > 1:
         target_sla = target_sla / 100.0  # allow 80 as 80%
 
-    # Start with a basic guess:
-    # intensity (erlangs) rounded up, plus 1, just like many Erlang examples. [web:26]
     intensity = traffic_intensity(calls_per_hour, aht_seconds)
     if intensity <= 0:
         return 0
 
     agents = max(1, math.ceil(intensity + 1))
-
-    # Safety: don't start above max_agents
     agents = min(agents, max_agents)
 
-    # Now keep adding agents until SLA is good enough or we hit max_agents
     while agents <= max_agents:
         sla = sla_for_interval(
             agents=agents,
@@ -151,68 +120,165 @@ def agents_for_sla(
             aht_seconds=aht_seconds,
             target_answer_time_seconds=target_answer_time_seconds,
         )
-
-        # If SLA meets or beats the target, we stop and return this agent count
         if sla >= target_sla:
             return agents
-
         agents += 1
 
-    # If we get here, something is off (too few agents allowed)
-    # Return max_agents as a "best we could do".
     return max_agents
 
 
-import pandas as pd
+def asa_for_interval(
+    agents: int,
+    calls_per_hour: float,
+    aht_seconds: float,
+) -> float:
+    """
+    ASA for one interval using Erlang C:
+      ASA = (Erlang_C * AHT) / (agents - A)
+    If agents <= A, system overloaded -> return large ASA.
+    """
+    if agents <= 0 or calls_per_hour <= 0 or aht_seconds <= 0:
+        return 0.0
+
+    A = traffic_intensity(calls_per_hour, aht_seconds)
+    if A <= 0:
+        return 0.0
+
+    if agents <= A:
+        return 999999.0
+
+    C = erlang_c(agents, A)
+    asa = (C * aht_seconds) / (agents - A)
+    return asa
+
+
+def agents_for_asa(
+    target_asa_seconds: float,
+    calls_per_hour: float,
+    aht_seconds: float,
+    max_agents: int = 1000,
+) -> int:
+    """
+    Find smallest number of agents to reach target ASA (seconds)
+    for one interval, by simple upward search.
+    """
+    if target_asa_seconds <= 0:
+        return 0
+    if calls_per_hour <= 0 or aht_seconds <= 0:
+        return 0
+
+    A = traffic_intensity(calls_per_hour, aht_seconds)
+    if A <= 0:
+        return 0
+
+    agents = max(1, math.ceil(A + 1))
+    agents = min(agents, max_agents)
+
+    while agents <= max_agents:
+        asa = asa_for_interval(
+            agents=agents,
+            calls_per_hour=calls_per_hour,
+            aht_seconds=aht_seconds,
+        )
+        if asa <= target_asa_seconds:
+            return agents
+        agents += 1
+
+    return max_agents
+
 
 def required_agents_and_hours_sla(
-volume_df: "pd.DataFrame",
-aht_df: "pd.DataFrame",
-target_sla: float,
-target_answer_time_seconds: float,
-interval_minutes: int,
+    volume_df: "pd.DataFrame",
+    aht_df: "pd.DataFrame",
+    target_sla: float,
+    target_answer_time_seconds: float,
+    interval_minutes: int,
 ) -> tuple["pd.DataFrame", "pd.DataFrame"]:
-"""
-For a whole week grid:
-- volume_df: calls per interval (rows = intervals, cols = days)
-- aht_df: AHT in seconds, same shape as volume_df
-Calculate:
-- required_agents_df: agents needed per cell
-- required_hours_df: required_hours = agents * (interval_minutes / 60)
-  This uses agents_for_sla() for each cell.[2][1]
-  """
+    """
+    For a whole week grid:
+      - volume_df: calls per interval (rows = intervals, cols = days)
+      - aht_df: AHT in seconds, same shape as volume_df
+    Returns:
+      - required_agents_df
+      - required_hours_df = agents * (interval_minutes / 60)
+    """
+    required_agents = pd.DataFrame(
+        0,
+        index=volume_df.index,
+        columns=volume_df.columns,
+    )
+    required_hours = pd.DataFrame(
+        0.0,
+        index=volume_df.index,
+        columns=volume_df.columns,
+    )
 
-  # Copy shape and index/columns from volume_df
-  required_agents = pd.DataFrame(
-      0,
-      index=volume_df.index,
-      columns=volume_df.columns,
-  )
-  required_hours = pd.DataFrame(
-      0.0,
-      index=volume_df.index,
-      columns=volume_df.columns,
-  )
+    interval_hours = interval_minutes / 60.0
 
-  interval_hours = interval_minutes / 60.0
+    for i in volume_df.index:
+        for day in volume_df.columns:
+            calls = float(volume_df.at[i, day] or 0)
+            aht = float(aht_df.at[i, day] or 0)
 
-  for i in volume_df.index:
-      for day in volume_df.columns:
-          calls = float(volume_df.at[i, day] or 0)
-          aht = float(aht_df.at[i, day] or 0)
+            if calls <= 0 or aht <= 0:
+                agents = 0
+            else:
+                agents = agents_for_sla(
+                    target_sla=target_sla,
+                    calls_per_hour=calls * (60.0 / interval_minutes),
+                    aht_seconds=aht,
+                    target_answer_time_seconds=target_answer_time_seconds,
+                )
 
-          if calls <= 0 or aht <= 0:
-              # No calls or no AHT: no agents, no hours
-              agents = 0
-          else:
-              agents = agents_for_sla(
-                  target_sla=target_sla,
-                  calls_per_hour=calls * (60.0 / interval_minutes),
-                  aht_seconds=aht,
-                  target_answer_time_seconds=target_answer_time_seconds,
-              )
+            required_agents.at[i, day] = agents
+            required_hours.at[i, day] = agents * interval_hours
 
-          required_agents.at[i, day] = agents
-          required_hours.at[i, day] = agents * interval_hours
+    return required_agents, required_hours
 
-  return required_agents, required_hours
+
+def required_agents_and_hours_asa(
+    volume_df: "pd.DataFrame",
+    aht_df: "pd.DataFrame",
+    target_asa_seconds: float,
+    interval_minutes: int,
+) -> tuple["pd.DataFrame", "pd.DataFrame"]:
+    """
+    For a whole week grid (ASA-based):
+      - volume_df: calls per interval
+      - aht_df: AHT in seconds
+    Returns:
+      - required_agents_df
+      - required_hours_df = agents * (interval_minutes / 60)
+    """
+    required_agents = pd.DataFrame(
+        0,
+        index=volume_df.index,
+        columns=volume_df.columns,
+    )
+    required_hours = pd.DataFrame(
+        0.0,
+        index=volume_df.index,
+        columns=volume_df.columns,
+    )
+
+    interval_hours = interval_minutes / 60.0
+
+    for i in volume_df.index:
+        for day in volume_df.columns:
+            calls_interval = float(volume_df.at[i, day] or 0)
+            aht = float(aht_df.at[i, day] or 0)
+
+            if calls_interval <= 0 or aht <= 0:
+                agents = 0
+            else:
+                calls_per_hour = calls_interval * (60.0 / interval_minutes)
+                agents = agents_for_asa(
+                    target_asa_seconds=target_asa_seconds,
+                    calls_per_hour=calls_per_hour,
+                    aht_seconds=aht,
+                )
+
+            required_agents.at[i, day] = agents
+            required_hours.at[i, day] = agents * interval_hours
+
+    return required_agents, required_hours
