@@ -1,10 +1,15 @@
 # main.py
 #
-# Wizard: Pages 1–4
+# Wizard: Pages 1–5
 # Run with: streamlit run main.py
 
 import streamlit as st
 import pandas as pd
+
+from erlang_engine import (
+    required_agents_and_hours_sla,
+    required_agents_and_hours_asa,
+)
 
 
 # --- helpers to manage wizard page number --- #
@@ -37,8 +42,10 @@ def init_wizard_state():
 
     if "data" not in st.session_state:
         st.session_state["data"] = {
-            "volume": None,  # will be a DataFrame later
-            "aht": None,     # will be a DataFrame later
+            "volume": None,          # DataFrame
+            "aht": None,             # DataFrame
+            "required_hours": None,  # DataFrame
+            "required_agents": None, # DataFrame
         }
 
     if "agent_types" not in st.session_state:
@@ -520,6 +527,112 @@ def page_4():
             go_to_page(5)
 
 
+# --- Page 5: Required Hours and Agents --- #
+
+def page_5():
+    st.title("Erlang Simulator Wizard")
+    st.header("Page 5: Required Hours and Agents")
+
+    config = st.session_state["config"]
+    data = st.session_state["data"]
+
+    interval_minutes = config["interval_minutes"]
+    interval_hours = interval_minutes / 60.0
+
+    requirement_type = config["requirement_type"]
+    kpi_type = config["kpi_type"]
+    kpi_targets = config["kpi_targets"]
+
+    volume_df = data.get("volume")
+    aht_df = data.get("aht")
+
+    if volume_df is None or aht_df is None:
+        st.error("Please complete Page 2 (Volume) and Page 3 (AHT) first.")
+        if st.button("⬅ Back to Page 2"):
+            go_to_page(2)
+        return
+
+    st.write(f"Interval length: {interval_minutes} minutes.")
+
+    # MODE 1: Volume-based requirements (Erlang)
+    if requirement_type == "volume":
+        st.subheader("Requirement Type: Volume (calculated via Erlang)")
+
+        if kpi_type == "sl":
+            st.write("KPI: Service Level – calculating agents and hours from Volume + AHT.")
+            target_sla = kpi_targets["sla"]
+            target_answer_time = kpi_targets["service_time_sec"]
+
+            req_agents, req_hours = required_agents_and_hours_sla(
+                volume_df=volume_df,
+                aht_df=aht_df,
+                target_sla=target_sla,
+                target_answer_time_seconds=target_answer_time,
+                interval_minutes=interval_minutes,
+            )
+
+        elif kpi_type == "asa":
+            st.write("KPI: ASA – calculating agents and hours from Volume + AHT.")
+            target_asa = kpi_targets["asa_sec"]
+
+            req_agents, req_hours = required_agents_and_hours_asa(
+                volume_df=volume_df,
+                aht_df=aht_df,
+                target_asa_seconds=target_asa,
+                interval_minutes=interval_minutes,
+            )
+        else:
+            st.error("Line Adherence mode not implemented yet for Volume requirements.")
+            return
+
+        data["required_agents"] = req_agents
+        data["required_hours"] = req_hours
+        st.session_state["data"] = data
+
+        st.markdown("### Required Agents per Interval")
+        st.dataframe(req_agents, use_container_width=True)
+
+        st.markdown("### Required Hours per Interval")
+        st.dataframe(req_hours, use_container_width=True)
+
+    # MODE 2: Hours-based requirements (manual)
+    else:
+        st.subheader("Requirement Type: Hours (manual)")
+
+        if data["required_hours"] is None:
+            data["required_hours"] = make_empty_week_grid(interval_minutes)
+
+        req_hours = data["required_hours"]
+
+        st.write("Enter required hours per interval for each day.")
+        edited_hours = st.data_editor(
+            req_hours,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="required_hours_editor",
+        )
+
+        data["required_hours"] = edited_hours
+
+        req_agents = edited_hours.copy()
+        req_agents = (req_agents / interval_hours).round(2)
+
+        data["required_agents"] = req_agents
+        st.session_state["data"] = data
+
+        st.markdown("### Implied Required Agents per Interval")
+        st.dataframe(req_agents, use_container_width=True)
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("⬅ Back to Page 4"):
+            go_to_page(4)
+    with col2:
+        if st.button("Next ➜ Page 6 (Roster Counts)"):
+            go_to_page(6)
+
+
 # --- Main entry point --- #
 
 def main():
@@ -534,6 +647,8 @@ def main():
         page_3()
     elif page == 4:
         page_4()
+    elif page == 5:
+        page_5()
     else:
         st.write("Later pages not built yet. Go back:")
         if st.button("⬅ Back to Page 1"):
