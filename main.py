@@ -1,6 +1,6 @@
 # main.py
 #
-# Wizard: Pages 1–6
+# Wizard: Pages 1–9
 # Run with: streamlit run main.py
 
 import streamlit as st
@@ -31,22 +31,26 @@ def init_wizard_state():
                 "abandon_pct": 0.02,       # 2%
                 "abandon_time_sec": 30,
                 "asa_sec": 20,
-                "interval_target_pct": 0.95,  # for line adherence (later)
-                "day_target_pct": 0.95,       # for line adherence (later)
+                "interval_target_pct": 0.95,
+                "day_target_pct": 0.95,
             },
             "shrinkage": {
-                "out_office_pct": 0.15,   # 15%
-                "in_office_pct": 0.10,    # 10%
+                "out_office_pct": 0.15,   # 15% external shrinkage
+                "in_office_pct": 0.10,    # 10% internal shrinkage (breaks etc.)
             },
         }
 
     if "data" not in st.session_state:
         st.session_state["data"] = {
-            "volume": None,              # DataFrame
-            "aht": None,                 # DataFrame
-            "required_hours": None,      # DataFrame
-            "required_agents": None,     # DataFrame
-            "roster_counts_raw": None,   # DataFrame (Page 6)
+            "volume": None,
+            "aht": None,
+            "required_hours": None,
+            "required_agents": None,
+            "roster_counts_raw": None,
+            "roster_after_ooo": None,
+            "roster_after_all_shrinkage": None,
+            "open_count": None,
+            "over_under": None,
         }
 
     if "agent_types" not in st.session_state:
@@ -69,7 +73,6 @@ def make_empty_week_grid(interval_minutes: int) -> "pd.DataFrame":
         hour = total_minutes // 60
         minute = total_minutes % 60
         labels.append(f"{hour:02d}:{minute:02d}")
-
     days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     return pd.DataFrame(0.0, index=labels, columns=days)
 
@@ -216,7 +219,7 @@ def page_1():
             "Out-of-Office Shrinkage (%)",
             min_value=0.0,
             max_value=100.0,
-            value=st.session_state["config"]["shrinkage"]["out_office_pct"] * 100,
+            value=config["shrinkage"]["out_office_pct"] * 100,
             step=1.0,
         )
     with col2:
@@ -224,7 +227,7 @@ def page_1():
             "In-Office Shrinkage (%)",
             min_value=0.0,
             max_value=100.0,
-            value=st.session_state["config"]["shrinkage"]["in_office_pct"] * 100,
+            value=config["shrinkage"]["in_office_pct"] * 100,
             step=1.0,
         )
 
@@ -555,7 +558,6 @@ def page_5():
 
     st.write(f"Interval length: {interval_minutes} minutes.")
 
-    # MODE 1: Volume-based requirements (Erlang)
     if requirement_type == "volume":
         st.subheader("Requirement Type: Volume (calculated via Erlang)")
 
@@ -596,7 +598,6 @@ def page_5():
         st.markdown("### Required Hours per Interval")
         st.dataframe(req_hours, use_container_width=True)
 
-    # MODE 2: Hours-based requirements (manual)
     else:
         st.subheader("Requirement Type: Hours (manual)")
 
@@ -637,14 +638,6 @@ def page_5():
 # --- helper: build initial roster counts for Page 6 --- #
 
 def build_initial_roster_counts(interval_minutes: int) -> "pd.DataFrame":
-    """
-    Very simple v1:
-    - Start from required_agents (total needed).
-    - For each agent type, assume all its agents are present for its
-      operating window (start_time→end_time) on its working days.
-    - Sum across types, then cap at required_agents so we don't
-      overschedule beyond requirement.
-    """
     data = st.session_state["data"]
     agent_types = st.session_state.get("agent_types", [])
 
@@ -652,14 +645,12 @@ def build_initial_roster_counts(interval_minutes: int) -> "pd.DataFrame":
     if required_agents is None:
         return None
 
-    # Base grid of zeros
     roster = pd.DataFrame(
         0.0,
         index=required_agents.index,
         columns=required_agents.columns,
     )
 
-    # Pre-compute interval times from labels like "09:00"
     interval_labels = list(required_agents.index)
     interval_start_minutes = []
     for label in interval_labels:
@@ -686,17 +677,13 @@ def build_initial_roster_counts(interval_minutes: int) -> "pd.DataFrame":
             for idx, label in enumerate(interval_labels):
                 t = interval_start_minutes[idx]
                 if start_minutes <= end_minutes:
-                    # normal daytime window
                     in_window = (t >= start_minutes) and (t < end_minutes)
                 else:
-                    # overnight crossing midnight (rare, but handle)
                     in_window = (t >= start_minutes) or (t < end_minutes)
                 if in_window:
                     roster.at[label, d] += num_agents
 
-    # Cap by required_agents to avoid huge overs in this simple v1
     roster_capped = roster.where(roster <= required_agents, other=required_agents)
-
     return roster_capped
 
 
@@ -745,6 +732,147 @@ def page_6():
             go_to_page(7)
 
 
+# --- Page 7: Roster After Out-of-Office Shrinkage --- #
+
+def page_7():
+    st.title("Erlang Simulator Wizard")
+    st.header("Page 7: Roster After Out-of-Office Shrinkage")
+
+    config = st.session_state["config"]
+    data = st.session_state["data"]
+
+    roster_raw = data.get("roster_counts_raw")
+    if roster_raw is None:
+        st.error("Please complete Page 6 to generate initial roster counts.")
+        if st.button("⬅ Back to Page 6"):
+            go_to_page(6)
+        return
+
+    out_office_pct = config["shrinkage"]["out_office_pct"]
+
+    if data.get("roster_after_ooo") is None:
+        roster_after = roster_raw * (1.0 - out_office_pct)
+        roster_after = roster_after.round(2)
+        data["roster_after_ooo"] = roster_after
+        st.session_state["data"] = data
+    else:
+        roster_after = data["roster_after_ooo"]
+
+    st.write(
+        f"Out-of-office shrinkage: {out_office_pct * 100:.1f}% "
+        "(leave, training, meetings outside phone time)."
+    )  [web:61]
+    st.write("Below are the effective in-office roster counts before breaks.")
+
+    st.markdown("### Roster Counts After Out-of-Office Shrinkage")
+    st.dataframe(roster_after, use_container_width=True)
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("⬅ Back to Page 6"):
+            go_to_page(6)
+    with col2:
+        if st.button("Next ➜ Page 8 (In-Office Shrinkage / Breaks)"):
+            go_to_page(8)
+
+
+# --- Page 8: Roster After In-Office Shrinkage (Breaks etc.) --- #
+
+def page_8():
+    st.title("Erlang Simulator Wizard")
+    st.header("Page 8: Roster After In-Office Shrinkage (Breaks)")
+
+    config = st.session_state["config"]
+    data = st.session_state["data"]
+
+    roster_after_ooo = data.get("roster_after_ooo")
+    if roster_after_ooo is None:
+        st.error("Please complete Page 7 first.")
+        if st.button("⬅ Back to Page 7"):
+            go_to_page(7)
+        return
+
+    in_office_pct = config["shrinkage"]["in_office_pct"]
+
+    if data.get("roster_after_all_shrinkage") is None:
+        # Apply in-office shrinkage to in-office roster
+        # (breaks, coaching, meetings while logged in). [web:61][web:62]
+        final_roster = roster_after_ooo * (1.0 - in_office_pct)
+        final_roster = final_roster.round(2)
+        data["roster_after_all_shrinkage"] = final_roster
+        st.session_state["data"] = data
+    else:
+        final_roster = data["roster_after_all_shrinkage"]
+
+    st.write(
+        f"In-office shrinkage: {in_office_pct * 100:.1f}% "
+        "(breaks, coaching, short meetings while logged in)."
+    )  [web:61]
+    st.write("This grid approximates agents actually available to take calls in each interval.")
+
+    st.markdown("### Roster After All Shrinkage (Available for Calls)")
+    st.dataframe(final_roster, use_container_width=True)
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("⬅ Back to Page 7"):
+            go_to_page(7)
+    with col2:
+        if st.button("Next ➜ Page 9 (Open Count vs Requirement)"):
+            go_to_page(9)
+
+
+# --- Page 9: Open Count and Over/Under vs Requirement --- #
+
+def page_9():
+    st.title("Erlang Simulator Wizard")
+    st.header("Page 9: Open Count vs Requirement")
+
+    data = st.session_state["data"]
+
+    required_agents = data.get("required_agents")
+    final_roster = data.get("roster_after_all_shrinkage")
+
+    if required_agents is None:
+        st.error("Please complete Page 5 to generate required agents.")
+        if st.button("⬅ Back to Page 5"):
+            go_to_page(5)
+        return
+
+    if final_roster is None:
+        st.error("Please complete Page 8 to compute available agents after shrinkage.")
+        if st.button("⬅ Back to Page 8"):
+            go_to_page(8)
+        return
+
+    open_count = final_roster.round(2)
+    over_under = (open_count - required_agents).round(2)
+
+    data["open_count"] = open_count
+    data["over_under"] = over_under
+    st.session_state["data"] = data
+
+    st.write("Open Count = agents available after all shrinkage (Page 8).")
+    st.write("Over/Under = Open Count − Required Agents (positive = overstaffed, negative = understaffed).")  [web:60][web:69]
+
+    st.markdown("### Open Count (Available Agents)")
+    st.dataframe(open_count, use_container_width=True)
+
+    st.markdown("### Over / Under vs Requirement")
+    st.dataframe(over_under, use_container_width=True)
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("⬅ Back to Page 8"):
+            go_to_page(8)
+    with col2:
+        if st.button("Next ➜ (Future Pages: Optimization, KPI Simulation)"):
+            go_to_page(10)
+
+
 # --- Main entry point --- #
 
 def main():
@@ -763,6 +891,12 @@ def main():
         page_5()
     elif page == 6:
         page_6()
+    elif page == 7:
+        page_7()
+    elif page == 8:
+        page_8()
+    elif page == 9:
+        page_9()
     else:
         st.write("Later pages not built yet. Go back:")
         if st.button("⬅ Back to Page 1"):
