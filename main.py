@@ -751,6 +751,7 @@ def page_7():
     out_office_pct = config["shrinkage"]["out_office_pct"]
 
     if data.get("roster_after_ooo") is None:
+        # Apply out-of-office shrinkage: keep (1 - out_office_pct)
         roster_after = roster_raw * (1.0 - out_office_pct)
         roster_after = roster_after.round(2)
         data["roster_after_ooo"] = roster_after
@@ -761,7 +762,7 @@ def page_7():
     st.write(
         f"Out-of-office shrinkage: {out_office_pct * 100:.1f}% "
         "(leave, training, meetings outside phone time)."
-    )  [web:61]
+    )
     st.write("Below are the effective in-office roster counts before breaks.")
 
     st.markdown("### Roster Counts After Out-of-Office Shrinkage")
