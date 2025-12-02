@@ -797,8 +797,7 @@ def page_8():
     in_office_pct = config["shrinkage"]["in_office_pct"]
 
     if data.get("roster_after_all_shrinkage") is None:
-        # Apply in-office shrinkage to in-office roster
-        # (breaks, coaching, meetings while logged in). [web:61][web:62]
+        # Apply in-office shrinkage (breaks, coaching, meetings while logged in)
         final_roster = roster_after_ooo * (1.0 - in_office_pct)
         final_roster = final_roster.round(2)
         data["roster_after_all_shrinkage"] = final_roster
@@ -809,7 +808,7 @@ def page_8():
     st.write(
         f"In-office shrinkage: {in_office_pct * 100:.1f}% "
         "(breaks, coaching, short meetings while logged in)."
-    )  [web:61]
+    )
     st.write("This grid approximates agents actually available to take calls in each interval.")
 
     st.markdown("### Roster After All Shrinkage (Available for Calls)")
@@ -823,6 +822,7 @@ def page_8():
     with col2:
         if st.button("Next ➜ Page 9 (Open Count vs Requirement)"):
             go_to_page(9)
+
 
 
 # --- Page 9: Open Count and Over/Under vs Requirement --- #
