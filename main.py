@@ -1,6 +1,6 @@
 # main.py
 #
-# Wizard: Pages 1–5
+# Wizard: Pages 1–6
 # Run with: streamlit run main.py
 
 import streamlit as st
@@ -42,10 +42,11 @@ def init_wizard_state():
 
     if "data" not in st.session_state:
         st.session_state["data"] = {
-            "volume": None,          # DataFrame
-            "aht": None,             # DataFrame
-            "required_hours": None,  # DataFrame
-            "required_agents": None, # DataFrame
+            "volume": None,              # DataFrame
+            "aht": None,                 # DataFrame
+            "required_hours": None,      # DataFrame
+            "required_agents": None,     # DataFrame
+            "roster_counts_raw": None,   # DataFrame (Page 6)
         }
 
     if "agent_types" not in st.session_state:
@@ -633,6 +634,117 @@ def page_5():
             go_to_page(6)
 
 
+# --- helper: build initial roster counts for Page 6 --- #
+
+def build_initial_roster_counts(interval_minutes: int) -> "pd.DataFrame":
+    """
+    Very simple v1:
+    - Start from required_agents (total needed).
+    - For each agent type, assume all its agents are present for its
+      operating window (start_time→end_time) on its working days.
+    - Sum across types, then cap at required_agents so we don't
+      overschedule beyond requirement.
+    """
+    data = st.session_state["data"]
+    agent_types = st.session_state.get("agent_types", [])
+
+    required_agents = data.get("required_agents")
+    if required_agents is None:
+        return None
+
+    # Base grid of zeros
+    roster = pd.DataFrame(
+        0.0,
+        index=required_agents.index,
+        columns=required_agents.columns,
+    )
+
+    # Pre-compute interval times from labels like "09:00"
+    interval_labels = list(required_agents.index)
+    interval_start_minutes = []
+    for label in interval_labels:
+        hour, minute = map(int, label.split(":"))
+        interval_start_minutes.append(hour * 60 + minute)
+
+    day_labels = list(required_agents.columns)
+
+    for atype in agent_types:
+        num_agents = atype["num_agents"]
+        if num_agents <= 0:
+            continue
+
+        start_time = atype["start_time"]
+        end_time = atype["end_time"]
+        working_days = atype.get("working_days", day_labels)
+
+        start_minutes = start_time.hour * 60 + start_time.minute
+        end_minutes = end_time.hour * 60 + end_time.minute
+
+        for d in day_labels:
+            if d not in working_days:
+                continue
+            for idx, label in enumerate(interval_labels):
+                t = interval_start_minutes[idx]
+                if start_minutes <= end_minutes:
+                    # normal daytime window
+                    in_window = (t >= start_minutes) and (t < end_minutes)
+                else:
+                    # overnight crossing midnight (rare, but handle)
+                    in_window = (t >= start_minutes) or (t < end_minutes)
+                if in_window:
+                    roster.at[label, d] += num_agents
+
+    # Cap by required_agents to avoid huge overs in this simple v1
+    roster_capped = roster.where(roster <= required_agents, other=required_agents)
+
+    return roster_capped
+
+
+# --- Page 6: Roster Counts (Initial) --- #
+
+def page_6():
+    st.title("Erlang Simulator Wizard")
+    st.header("Page 6: Roster Counts (Initial)")
+
+    config = st.session_state["config"]
+    data = st.session_state["data"]
+    agent_types = st.session_state.get("agent_types", [])
+
+    interval_minutes = config["interval_minutes"]
+
+    if not agent_types:
+        st.error("Please define at least one agent type on Page 4.")
+        if st.button("⬅ Back to Page 4"):
+            go_to_page(4)
+        return
+
+    if data.get("required_agents") is None:
+        st.error("Please complete Page 5 to calculate required agents.")
+        if st.button("⬅ Back to Page 5"):
+            go_to_page(5)
+        return
+
+    if data.get("roster_counts_raw") is None:
+        roster_counts = build_initial_roster_counts(interval_minutes)
+        data["roster_counts_raw"] = roster_counts
+        st.session_state["data"] = data
+    else:
+        roster_counts = data["roster_counts_raw"]
+
+    st.write("This is an initial, simple roster distribution before shrinkage and optimization.")
+    st.markdown("### Initial Roster Counts per Interval (All Types Combined)")
+    st.dataframe(roster_counts, use_container_width=True)
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("⬅ Back to Page 5"):
+            go_to_page(5)
+    with col2:
+        if st.button("Next ➜ Page 7 (After Out-of-Office Shrinkage)"):
+            go_to_page(7)
+
+
 # --- Main entry point --- #
 
 def main():
@@ -649,6 +761,8 @@ def main():
         page_4()
     elif page == 5:
         page_5()
+    elif page == 6:
+        page_6()
     else:
         st.write("Later pages not built yet. Go back:")
         if st.button("⬅ Back to Page 1"):
