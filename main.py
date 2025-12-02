@@ -355,7 +355,7 @@ def page_4():
     with st.form("add_agent_type_form"):
         st.subheader("Add / Edit Agent Type")
 
-        name = st.text_input("Agent Type Name", value= editing type["name"] if editing type else "Default Type")
+        name = st.text_input("Agent Type Name", value= editing_type["name"] if editing_type else "Default Type")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -363,14 +363,14 @@ def page_4():
                 "Number of Agents",
                 min_value=0,
                 max_value=10000,
-                value= editing type["num_agents"] if editing type else 10,
+                value= editing_type["num_agents"] if editing_type else 10,
                 step=1,
             )
             shift_length_hours = st.number_input(
                 "Shift Length (hours)",
                 min_value=1.0,
                 max_value=24.0,
-                value= editing type["shift_length_hours"] if editing type else 8.0,
+                value= editing_type["shift_length_hours"] if editing_type else 8.0,
                 step=0.5,
             )
         with col2:
@@ -378,36 +378,36 @@ def page_4():
                 "Number of Week-offs per Week",
                 min_value=0,
                 max_value=7,
-                value= editing type["weekoffs_per_agent"] if editing type else 2,
+                value= editing_type["weekoffs_per_agent"] if editing_type else 2,
                 step=1,
             )
             min_rest_hours = st.number_input(
                 "Minimum Rest Time Between Shifts (hours)",
                 min_value=0.0,
                 max_value=48.0,
-                value= editing type["min_rest_hours"] if editing type else 12.0,
+                value= editing_type["min_rest_hours"] if editing_type else 12.0,
                 step=1.0,
             )
 
         st.markdown("**Break Lengths (minutes)**")
         bcol1, bcol2, bcol3 = st.columns(3)
         with bcol1:
-            break1 = st.number_input("Break 1", min_value=0, max_value=120, value= editing type["break1"] if editing type else 15, step=5)
+            break1 = st.number_input("Break 1", min_value=0, max_value=120, value= editing_type["break1"] if editing_type else 15, step=5)
         with bcol2:
-            break2 = st.number_input("Lunch", min_value=0, max_value=120, value= editing type["break2"] if editing type else 30, step=5)
+            break2 = st.number_input("Lunch", min_value=0, max_value=120, value= editing_type["break2"] if editing_type else 30, step=5)
         with bcol3:
-            break3 = st.number_input("Break 2", min_value=0, max_value=120, value= editing type["break3"] if editing type else 15, step=5)
+            break3 = st.number_input("Break 2", min_value=0, max_value=120, value= editing_type["break3"] if editing_type else 15, step=5)
 
         consecutive_weekoffs = st.checkbox(
             "Consecutive Week-Offs Required?",
-            value= editing type["consecutive_weekoffs"] if editing type else True,
+            value= editing_type["consecutive_weekoffs"] if editing_type else True,
         )
 
         max_working_days_between_weekoffs = st.number_input(
             "Max Working Days Between Week-offs",
             min_value=1,
             max_value=14,
-            value= editing type["max_working_days_between_weekoffs"] if editing type else 6,
+            value= editing_type["max_working_days_between_weekoffs"] if editing_type else 6,
             step=1,
         )
 
@@ -416,9 +416,9 @@ def page_4():
         # Time inputs for start and end
         col_t1, col_t2 = st.columns(2)
         with col_t1:
-            start_time = st.time_input("Start Time", value= editing type["start_time"] if editing type else pd.to_datetime("09:00").time())
+            start_time = st.time_input("Start Time", value= editing_type["start_time"] if editing_type else pd.to_datetime("09:00").time())
         with col_t2:
-            end_time = st.time_input("End Time", value= editing type["end_time"] if editing type else pd.to_datetime("18:00").time())
+            end_time = st.time_input("End Time", value= editing_type["end_time"] if editing_type else pd.to_datetime("18:00").time())
         
         # Working days (checkboxes)
         st.markdown("**Working Days**")
